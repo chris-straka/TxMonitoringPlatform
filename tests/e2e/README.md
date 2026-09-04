@@ -10,11 +10,11 @@ The harness builds three application images, starts only its own isolated Compos
 checks these reliability seams:
 
 1. ingestion's TLS endpoint refuses clients without an allowlisted gateway certificate;
-2. the edge queues readings while ingestion is stopped;
-3. the SQLite queue survives an edge restart and drains after ingestion recovers;
+2. the capture gateway queues transactions while ingestion is stopped;
+3. the SQLite queue survives a gateway restart and drains after ingestion recovers;
 4. Postgres contains exactly one row per submitted `MessageId`;
-5. Diagnostics rewinds and later persists a reading consumed during a Postgres outage;
-6. malformed Kafka JSON is durably copied to `telemetry-events-dlq` before its source offset is
+5. detection rewinds and later persists a transaction consumed during a Postgres outage;
+6. malformed Kafka JSON is durably copied to `transaction-events-dlq` before its source offset is
    committed; and
 7. a pending alert outbox row survives a Kafka outage and publishes after broker recovery.
 

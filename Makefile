@@ -61,10 +61,10 @@ db-update: ## apply pending EF migrations
 
 # -d DB -c command \dt describe tables
 db-check:
-	docker exec -it industrialplatform-postgres-1 psql -U admin -d industrial_db -c "\dt"
+	docker exec -it txmonitoringplatform-postgres-1 psql -U admin -d tx_monitoring -c "\dt"
 
 db-rows:
-	docker exec -it industrialplatform-postgres-1 psql -U admin -d industrial_db -c "SELECT * FROM \"TelemetryReadings\";"
+	docker exec -it txmonitoringplatform-postgres-1 psql -U admin -d tx_monitoring -c "SELECT * FROM \"Transactions\";"
 
 logs:
 	docker compose logs -f $(c)
@@ -88,11 +88,11 @@ run-gw:
 # ---------------------------------------------------------------------------
 # Store-and-forward demo
 #
-# The point: sensors keep producing through a total cloud outage, the gateway
-# survives its own restart mid-outage, and when the cloud returns the queue
-# drains every reading the gateway accepted, without duplicate Postgres rows.
+# The point: the feed keeps generating through a total ingestion outage, the gateway
+# survives its own restart mid-outage, and when ingestion returns the queue
+# drains every transaction the gateway accepted, without duplicate Postgres rows.
 #
-# Watch `edge_queue_depth` and `edge_oldest_message_age_seconds` in Grafana
+# Watch `capture_queue_depth` and `capture_oldest_transaction_age_seconds` in Grafana
 # (localhost:3000) while running these.
 # ---------------------------------------------------------------------------
 
@@ -106,26 +106,26 @@ demo-help: ## print the store-and-forward outage demo, step by step
 	@echo "7. make verify               # quiesce, drain queue/Kafka/outbox, then audit"
 
 # The cloud dies. Sensors and gateway keep running.
-fleet: ## start extra emulator containers (3 replicas, EQ-0..EQ-11)
+fleet: ## start extra feed-emulator containers (3 replicas, ACCT-0000..ACCT-0011)
 	docker compose --profile fleet up -d
 
-chaos-cloud-down: ## kill the cloud; the edge queue starts filling
+chaos-cloud-down: ## kill ingestion; the capture queue starts filling
 	docker compose stop ingestion-api
 
-chaos-cloud-up: ## bring the cloud back; the queue drains
+chaos-cloud-up: ## bring ingestion back; the queue drains
 	docker compose start ingestion-api
 
-# The gateway dies too, while the cloud is still down. This is the interesting one:
+# The gateway dies too, while ingestion is still down. This is the interesting one:
 # the SQLite buffer is on a named volume, so the queue is still there on restart.
 chaos-gateway-kill: ## restart the gateway mid-outage; the buffer survives
-	docker compose restart edge-gateway
+	docker compose restart capture-gateway
 
 # How deep is the local buffer right now?
-queue: ## current edge buffer depth
+queue: ## current capture buffer depth
 	@curl -s http://localhost:5272/buffer | python3 -m json.tool
 
-# Quiesces and later restores any running sensor containers so the queue, Kafka lag, and outbox
-# checks describe one stable snapshot instead of racing newly generated readings.
+# Quiesces and later restores any running feed containers so the queue, Kafka lag, and outbox
+# checks describe one stable snapshot instead of racing newly generated transactions.
 verify: ## drain and audit IDs, duplicates, sequence gaps, and lag
 	@./scripts/verify.sh
 

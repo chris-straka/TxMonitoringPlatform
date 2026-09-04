@@ -13,12 +13,16 @@ It remains a deployment prototype. Before an apply, an operator must provide:
 - a versioned S3 state bucket and IAM access for encrypted state plus the `.tflock` object;
 - published application images and an accessible Git repository/revision;
 - either the named Kubernetes application Secret or a working External Secrets Operator,
-  SecretStore/ClusterSecretStore, and the three referenced remote secret values;
-- storage classes, DNS/ingress, TLS/mTLS, and an OTLP collector appropriate to the target cluster.
+  SecretStore/ClusterSecretStore, and the two referenced Postgres remote secret values;
+- storage classes, DNS/ingress, TLS/mTLS, Redis endpoint/security (see below), and an OTLP
+  collector appropriate to the target cluster.
 
-The Gemini API key is intentionally not a Terraform variable. Terraform and the Argo Application
-carry only the remote-secret identifier; the value moves directly from the external secret store
-to a Kubernetes Secret. With `external_secret.enabled = false`, create that Secret out of band.
+Risk decisions are deterministic and computed by detection; there is no external LLM key to
+wire. With `external_secret.enabled = false`, create the application Secret out of band.
+
+Redis is an unproven prototype surface here: point the chart at an external/managed Redis
+endpoint. Production Redis still needs TLS/auth, credential rotation, a maxmemory/noeviction
+budget, and network policy; those are open work in `TODO.md`, not claims made by this stack.
 
 ## Validate locally
 

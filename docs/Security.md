@@ -1,14 +1,14 @@
 # Security boundary
 
-Docker Compose demonstrates mutual TLS only on the WAN-shaped edge-gateway to ingestion-api gRPC
+Docker Compose demonstrates mutual TLS only on the WAN-shaped capture-gateway to ingestion-api gRPC
 hop. It does not make the whole local platform a zero-trust deployment.
 
 | hop or surface | Compose protection | current limitation |
 | --- | --- | --- |
-| edge gateway -> ingestion gRPC | TLS plus required client certificate | development PKI; one simulated gateway identity |
-| sensor -> edge receiver | loopback-published host port, plain HTTP inside Compose | no sensor authentication or transport encryption |
+| capture gateway -> ingestion gRPC | TLS plus required client certificate | development PKI; one simulated gateway identity |
+| feed -> gateway receiver | loopback-published host port, plain HTTP inside Compose | no feed authentication or transport encryption |
 | applications -> Kafka | private Compose network | plaintext, unauthenticated Kafka protocol |
-| diagnostics -> Postgres | password from local Compose configuration | plaintext connection and development credential |
+| detection -> Postgres | password from local Compose configuration | plaintext connection and development credential |
 | applications -> OTel collector/backends | private Compose network | plaintext, unauthenticated OTLP/backend traffic |
 | dashboard/operator tools | host ports bound to `127.0.0.1` | local-only exposure is not application authentication |
 

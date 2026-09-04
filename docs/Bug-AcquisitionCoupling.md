@@ -1,6 +1,6 @@
 # Bug: acquisition was coupled to transmission (fixed)
 
-Found while reviewing the emulator. Worth keeping because the same bug existed at two
+Found while reviewing the feed generator. Worth keeping because the same bug existed at two
 different layers of this system, which is the interesting part.
 
 # The original shape
@@ -8,8 +8,8 @@ different layers of this system, which is the interesting part.
 ```cs
 while (await timer.WaitForNextTickAsync(stoppingToken))
 {
-    var reading = Generate();
-    await client.PostAsJsonAsync(route, reading, ct);  // <-- the whole loop waits here
+    var transaction = Generate();
+    await client.PostAsJsonAsync(route, transaction, ct);  // <-- the whole loop waits here
 }
 ```
 
@@ -34,20 +34,20 @@ t=10s  send finally returns
 t=12s  tick -> generate #2
 ```
 
-Four readings were not delayed. They were **never taken**.
+Four transactions were not delayed. They were **never generated**.
 
-That is the important distinction. Nothing queued up and drained late. The sensor's
-sample rate silently dropped because the network was slow. A temperature spike during
+That is the important distinction. Nothing queued up and drained late. The generator's
+output rate silently dropped because the network was slow. An amount spike during
 those 10 seconds simply never existed as far as this system is concerned, and no metric
 anywhere would show a gap, because the sequence numbers stay contiguous.
 
 It also directly contradicted the comment sitting three lines below it:
 
 ```cs
-// A real sensor doesn't stop sampling because a cable is out
+// A real source doesn't stop producing because a cable is out
 ```
 
-It did stop sampling.
+It did stop producing.
 
 # The coupling, named precisely
 
@@ -57,9 +57,9 @@ The coupling is **acquisition awaiting transmission**. Generating a reading and 
 a reading are different jobs with different failure modes, and they were sharing one
 thread of control, so the slower one throttled the faster one.
 
-This is the same bug that motivated the Edge Gateway. The original emulator awaited a POST
-to the CLOUD, so a cloud outage stopped data generation. Splitting the gateway out fixed
-the blast radius (the emulator now only waits on a machine on the same LAN) but not the
+This is the same bug that motivated the capture gateway. The original generator awaited a
+POST to ingestion, so an ingestion outage stopped generation. Splitting the gateway out
+fixed the blast radius (the feed now only waits on a machine on the same LAN) but not the
 shape -- acquisition was still awaiting transmission, just against a nearer target.
 
 Fixing the blast radius is not the same as fixing the coupling.
@@ -69,9 +69,9 @@ Fixing the blast radius is not the same as fixing the coupling.
 Two `BackgroundService`s that share nothing but a buffer:
 
 ```
-AcquisitionWorker            Channel<TelemetryDto>          TransmissionWorker
-  one task per device   ──►   bounded, in memory     ──►     drains and POSTs
-  never touches network                                      never blocks acquisition
+TransactionGeneratorWorker   Channel<TransactionSubmission>   TransmissionWorker
+  one task per account  ──►   bounded, in memory        ──►     drains and POSTs
+  never touches network                                            never blocks generation
 ```
 
 Same structure as the gateway one layer up:
@@ -85,12 +85,12 @@ is the whole architecture:
 
 | | buffer | survives process death | if the buffer fills |
 | --- | --- | --- | --- |
-| sensor | RAM (`Channel`) | no | readings are lost at the sensor |
+| feed | RAM (`Channel`) | no | transactions are dropped pre-custody and counted |
 | gateway | disk (SQLite, WAL, fsync) | yes | sheds with 429 + Retry-After |
 
-The sensor is allowed to lose data because it is a device with finite RAM, and it says so
-out loud (`TryWrite` returns false, we count it, we log it). The gateway is not allowed to,
-which is why it pays for an fsync per reading.
+The feed is allowed to lose data because it is synthetic load with finite RAM, and it says
+so out loud (`TryWrite` returns false, we count it, we log it). The gateway is not allowed
+to, which is why it pays for an fsync per transaction.
 
 # What to say about this
 

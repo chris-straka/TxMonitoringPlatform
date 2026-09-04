@@ -2,13 +2,13 @@ services:
   ingestion-api:
     # E2E images use separate tags so this harness cannot replace the images used by the normal
     # development Compose project.
-    image: industrialplatform-e2e-ingestion-api
+    image: txmonitoring-e2e-ingestion-api
     ports: !reset []
     environment:
       Kafka__ReadinessTimeoutSeconds: "3"
 
-  edge-gateway:
-    image: industrialplatform-e2e-edge-gateway
+  capture-gateway:
+    image: txmonitoring-e2e-capture-gateway
     ports: !reset []
     environment:
       Buffer__QuarantineRetentionHours: "168"
@@ -18,13 +18,10 @@ services:
       Uploader__MaxBackoffSeconds: "2"
       Uploader__UploadTimeoutSeconds: "3"
 
-  diagnostics-worker:
-    image: industrialplatform-e2e-diagnostics-worker
+  detection-worker:
+    image: txmonitoring-e2e-detection-worker
     environment:
-      # The test uses ordinary readings and never relies on a remote AI response. A non-empty
-      # value is still required by startup validation.
-      Gemini__ApiKey: e2e-not-a-real-key
-      Kafka__DeadLetterTopic: telemetry-events-dlq
+      Kafka__DeadLetterTopic: transaction-events-dlq
       Kafka__ReadinessTimeoutSeconds: "3"
       Consumer__BaseBackoffSeconds: "1"
       Consumer__MaxBackoffSeconds: "2"
@@ -44,6 +41,6 @@ services:
     # Keep this self-contained even if the main Compose file has not yet added the DLQ topic.
     command:
       - |
-        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic telemetry-events --partitions 6 --replication-factor 1
-        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic telemetry-alerts --partitions 6 --replication-factor 1
-        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic telemetry-events-dlq --partitions 6 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic transaction-events --partitions 6 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic risk-alerts --partitions 6 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic transaction-events-dlq --partitions 6 --replication-factor 1

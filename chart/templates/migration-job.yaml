@@ -1,0 +1,34 @@
+{{- if .Values.detectionWorker.migration.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  # The single production migration owner. Detection replicas never call MigrateAsync
+  # outside Development, so they cannot race this Job; they stay unready on the
+  # postgres_migrations readiness check until the schema is current.
+  name: {{ include "tx-monitoring.fullname" . }}-db-migrate
+  labels:
+    {{- include "tx-monitoring.labels" . | nindent 4 }}
+spec:
+  backoffLimit: {{ .Values.detectionWorker.migration.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.detectionWorker.migration.activeDeadlineSeconds }}
+  ttlSecondsAfterFinished: {{ .Values.detectionWorker.migration.ttlSecondsAfterFinished }}
+  template:
+    metadata:
+      labels:
+        {{- include "tx-monitoring.selectorLabels" (dict "root" . "component" "db-migrate") | nindent 8 }}
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: db-migrate
+          image: {{ include "tx-monitoring.image" (dict "root" . "name" "detection-worker") | quote }}
+          imagePullPolicy: {{ .Values.platform.imagePullPolicy }}
+          args:
+            - --migrate-and-exit
+          env:
+            {{- include "tx-monitoring.commonEnv" (dict "root" . "serviceName" "TxMonitoring.Detection.Worker.DbMigrate") | nindent 12 }}
+            - name: ConnectionStrings__TxMonitoringDb
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.platform.applicationSecret.name | quote }}
+                  key: {{ .Values.platform.applicationSecret.postgresConnectionStringKey | quote }}
+{{- end }}

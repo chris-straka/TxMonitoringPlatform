@@ -5,5 +5,5 @@ helm = "latest"
 #      removed field before it ships -- the wire-compat mistake that is invisible
 #      in code review. Worth a CI step.
 buf = "latest"
-# grpcurl: curl for gRPC. Hit StreamTelemetry by hand without writing a client.
+# grpcurl: curl for gRPC. Hit UploadTransactions by hand without writing a client.
 grpcurl = "latest"

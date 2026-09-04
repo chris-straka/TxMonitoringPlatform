@@ -1,0 +1,10 @@
+@WebApiHostAddress = http://localhost:5127
+
+### Liveness.
+GET {{WebApiHostAddress}}/health
+
+### Readiness: Kafka topics and consumer assignment are available.
+GET {{WebApiHostAddress}}/health/ready
+
+### Live risk alerts stream over SignalR at /riskHub (latest-only, best-effort view
+### with reconnect and bounded dedupe; a disconnected client misses live events).

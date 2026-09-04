@@ -1,27 +1,23 @@
-# Why this project maps onto payments
+# Why this project maps onto payments (and where it stops)
 
-The plan is to retarget this at fintech roles. The architecture barely changes; the
-vocabulary and the STAKES do.
+The architecture is a monitoring pipeline with a durability boundary, and that shape — not
+any domain vocabulary — is what generalises. The vocabulary did change deliberately:
 
 ```
-industrial                          payments
+old                                 payments
 -----------------------------------------------------------------
-sensor / equipment            ->    POS terminal, card reader, ATM
-edge gateway                  ->    store controller, branch server
-ingestion API                 ->    acquirer / processor gateway
-telemetry reading             ->    authorization or capture message
-anomaly detection (ML.NET)    ->    fraud scoring, velocity checks
-EngineTemperature (double)    ->    Amount (DECIMAL, never double)
-telemetry-events (Kafka)      ->    payment-authorizations
+feed emulator (synthetic)     ->    synthetic transaction source (NOT a bank)
+capture gateway               ->    monitoring capture point / branch store-and-forward
+ingestion API                 ->    acquirer / processor gateway (monitoring intake)
+transaction observation       ->    outbound debit attempt selected for monitoring
+amount spike (online IID)     ->    per-account baseline signal, not a fraud model
+AmountMinor (long)            ->    integer minor units (never double, never DECIMAL)
+transaction-events (Kafka)    ->    monitoring events (NOT payment-authorizations)
+risk-alerts (Kafka)           ->    review recommendations (NOT approvals/declines)
 ```
 
-Yes, payment terminals are squarely fintech. Square, SumUp, Adyen and Stripe all ship
-terminal hardware plus the software behind it, and payments infrastructure is one of the
-largest fintech categories by headcount.
-
-Worth knowing though: not every fintech job is payments. Lending, neobanks, trading,
-regtech and personal finance do not have a terminal anywhere. What generalises to ALL of
-them is the correctness machinery, not the topology:
+What generalises to every data-intensive backend — payments, lending, trading, regtech — is
+the correctness machinery, not the topology:
 
 - idempotency keys minted at the origin
 - at-least-once delivery plus an idempotent consumer
@@ -32,17 +28,31 @@ them is the correctness machinery, not the topology:
 For a trading firm specifically, lead with ordering, sequence gaps and replay rather than
 store-and-forward.
 
+# The feed is synthetic on purpose
+
+A real payment origin would retain an authoritative record; a terminal in offline mode keeps
+accepting cards precisely because it persists locally first. This repository deliberately
+begins with a **synthetic load generator** and demonstrates downstream monitoring custody:
+the durable contract starts when the capture gateway commits a valid transaction to SQLite
+and returns `202`. The feed's bounded in-memory channel drops under pressure and says so out
+loud (`feed.transaction.dropped`, `feed.transaction.delivery_dropped`).
+
+Do not claim the feed is a processor, terminal, ledger, or source of truth, and do not claim
+durable capture of every generated transaction.
+
 # Money is not a double
 
-`decimal` in C#, `BigDecimal` in Java, or integer minor units (cents) in a `long`.
+Integer minor units in a `long`: protobuf `int64`, SQLite `INTEGER`, Postgres `bigint`,
+checked arithmetic for sums, Redis integer commands for window sums.
 
-Binary floating point cannot represent 0.1 exactly, so `0.1 + 0.2 != 0.3`. Accumulate
-that over a million transactions and the ledger does not balance. Interviewers notice this
-one immediately.
+Binary floating point cannot represent 0.1 exactly, so `0.1 + 0.2 != 0.3`. Accumulate that
+over a million transactions and the totals do not balance. Interviewers notice this one
+immediately. (The one exception is the ML.NET detector's derived `log(1 + AmountMinor)`
+feature: a float used only as a model input, never stored or totalled as money.)
 
 # Card networks really do have two durable layers
 
-The thing that makes the store-and-forward story land harder in payments than in industry:
+The thing that makes the store-and-forward story land in payments:
 
 ```
 card reader  --->  store controller  --->  acquirer  --->  network  --->  issuer
@@ -55,12 +65,9 @@ the terminal keeps accepting cards, stores the transactions locally, and forward
 when connectivity returns. Floor limits, offline PIN verification, and issuer risk rules
 exist precisely to bound how much risk the merchant takes on during that window.
 
-That is a real business decision encoded in a durability choice: a shop that stops
-accepting cards when the network hiccups loses revenue immediately, so the industry chose
-to accept some fraud risk in exchange for staying open.
-
-Contrast the industrial version, where the sensor holds telemetry in RAM and the gateway
-is the only durable layer.
+Contrast this project, where the synthetic feed holds transactions in RAM and the capture
+gateway is the only durable layer. That asymmetry is honest for a monitoring demo and would
+be wrong for a payments origin.
 
 ## Glossary for the paragraph above
 
@@ -85,45 +92,37 @@ THE RISK THEY ACCEPT
 
 > The durability of a buffer should match the cost of losing one item in it.
 
-That single sentence explains every buffering decision in this repo, and why the fintech
-version answers differently:
+That single sentence explains every buffering decision in this repo:
 
 | item | cost of losing one | correct buffer |
 | --- | --- | --- |
-| temperature reading | shrug -- another arrives in 2s, the physical process is continuous | RAM, bounded, drop and count |
-| payment authorization | chargeback, support call, possibly a regulator | disk, fsync'd, never dropped |
+| synthetic feed transaction | shrug -- load is regenerable and pre-custody by design | RAM, bounded, drop and count |
+| captured transaction | a monitoring blind spot over real money movement | disk, fsync'd, never dropped |
 
-A missed temperature sample is unrecoverable but cheap: you cannot go back and measure the
-past, but the past resembled the present closely enough that nobody is harmed. A dropped
-payment is unrecoverable AND expensive, because it represents a customer intent that
-existed exactly once.
-
-So in the fintech rewrite, the emulator's `Channel<T>` becomes durable storage. You end up
-with two store-and-forward layers instead of one -- which looks like duplication until you
-notice that is exactly what the real card networks do.
+A dropped feed transaction is cheap because the feed is synthetic load, not customer intent.
+A dropped captured transaction would be a gap in oversight of money movement the system had
+already promised to watch — which is why the gateway pays for an fsync per transaction.
 
 # What gets harder, not easier
 
-Do not claim the fintech version is the same project with renamed fields. Things that are
-genuinely harder once money is involved:
+Do not claim this is a payments system with renamed fields. Things that are genuinely harder
+once real money is involved:
 
-- **Reconciliation.** Telemetry has no counterparty. Payments have an acquirer whose
-  totals must match yours at end of day, and a process for when they do not.
-- **Reversals.** A reading is never un-taken. An authorization gets voided, refunded, or
-  charged back, so the ledger needs entries that undo without deleting.
-- **Retention and audit.** You cannot drop a poison-pill payment message and move on. It
-  goes to a DEAD LETTER QUEUE -- a separate topic where unprocessable messages land with
-  their error attached, so a human can inspect and replay them instead of the data simply
-  vanishing. The telemetry project now demonstrates publish-before-commit DLQ handling, but a
-  payment system would additionally need controlled remediation, replay approval, and much longer
-  retention guarantees.
-- **PCI scope.** PCI DSS is the card industry's security standard. "Scope" means which of
-  your systems fall under its audit: anything that stores, processes or transmits
-  cardholder data, especially the PAN (Primary Account Number -- the 16 digits on the
-  front). In-scope systems need encryption, access control, retained logs and an annual
-  audit, all of which is expensive. So real designs work hard to MINIMISE scope --
-  tokenisation swaps the PAN for a meaningless token as early as possible so that
-  everything downstream never sees card data and stays out of audit entirely.
+- **Reconciliation.** Monitoring observations have no counterparty. Payments have an
+  acquirer whose totals must match yours at end of day, and a process for when they do not.
+- **Reversals.** An observation is never un-taken. An authorization gets voided, refunded,
+  or charged back, so the ledger needs entries that undo without deleting.
+- **Lifecycle.** This project has one event type: a monitored debit attempt. Real payments
+  correlate authorisations, captures, refunds, and chargebacks — an explicit event-type and
+  rule-eligibility contract this repo deliberately does not have.
+- **Retention and audit.** A poison transaction goes to `transaction-events-dlq` with its
+  error attached, but production regulated monitoring would additionally need durable
+  remediation, operator acknowledgement, controlled replay, access control, and much longer
+  retention.
+- **Real PII and PCI scope.** This project stores only opaque synthetic account IDs. Real
+  cardholder data (PANs, names, bank numbers) would bring encryption, access control,
+  retained logs, and audit — none of which this demo provides. Removing the old LLM call
+  reduces data egress; it does not establish compliance.
 
 Being able to name these is worth more than the rename itself -- it shows you know the
 domain has depth rather than assuming a find-and-replace covers it.

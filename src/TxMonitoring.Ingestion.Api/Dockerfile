@@ -3,7 +3,7 @@ WORKDIR /src
 COPY ["Directory.Build.props", "./"]
 COPY ["src/TxMonitoring.Ingestion.Api/TxMonitoring.Ingestion.Api.csproj", "src/TxMonitoring.Ingestion.Api/"]
 COPY ["src/TxMonitoring.Shared/TxMonitoring.Shared.csproj", "src/TxMonitoring.Shared/"]
-COPY ["src/Protos/telemetry.proto", "src/Protos/"]
+COPY ["src/Protos/transactions.proto", "src/Protos/"]
 RUN dotnet restore "src/TxMonitoring.Ingestion.Api/TxMonitoring.Ingestion.Api.csproj"
 COPY . .
 RUN dotnet publish "src/TxMonitoring.Ingestion.Api/TxMonitoring.Ingestion.Api.csproj" -c Release -o /app/publish --no-restore

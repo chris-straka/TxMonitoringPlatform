@@ -1,7 +1,7 @@
 .g means generated. The convention is old (designer files, source generators); what is
 new in .NET 6 is IMPLICIT USINGS, which is why this particular .g.cs exists at all.
 
-[Where the worker stores its auto injected packages](/src/Industrial.Diagnostics.Worker/obj/Debug/net10.0/Industrial.Diagnostics.Worker.GlobalUsings.g.cs)
+[Where the worker stores its auto injected packages](/src/TxMonitoring.Detection.Worker/obj/Debug/net10.0/TxMonitoring.Detection.Worker.GlobalUsings.g.cs)
 
 [security](https://learn.microsoft.com/en-us/aspnet/core/security/?view=aspnetcore-10.0)
 [performance](https://learn.microsoft.com/en-us/aspnet/core/performance/overview?view=aspnetcore-10.0)
@@ -51,7 +51,7 @@ Transient is created every time you ask for it.
 Scoped is one instance per scope. In ASP.NET Core the FRAMEWORK opens a scope per HTTP
 request, which is why `DbContext` is scoped by default -- you rarely create one yourself.
 In a worker there are no requests, so you open scopes explicitly (`CreateScope()`), or
-sidestep them with a factory like `IDbContextFactory` as `Diagnostics.Worker` does.
+sidestep them with a factory like `IDbContextFactory` as `Detection.Worker` does.
 
 Singleton is created once and reused for the entire app lifetime
 
@@ -62,8 +62,8 @@ anyone reads in a csproj:
 
 | SDK                        | means                                     | projects          |
 | -------------------------- | ----------------------------------------- | ----------------- |
-| `Microsoft.NET.Sdk.Worker` | hosted background service, serves nothing | `Sensor.Emulator` |
-| `Microsoft.NET.Sdk`        | class library or one-shot CLI             | `Data.ML`, `Shared` |
+| `Microsoft.NET.Sdk.Worker` | hosted background service, serves nothing | `Feed.Emulator` |
+| `Microsoft.NET.Sdk`        | class library or one-shot CLI             | `ML.DetectorBuilder`, `Shared` |
 | `Microsoft.NET.Sdk.Web`    | serves HTTP                               | Everything else   |
 
 `.Worker` and `.Web` both provide `Microsoft.Extensions.*` implicit usings;
@@ -159,7 +159,7 @@ connection multiplexes many requests and the pool stays small.
 "Many chains" only happens two ways: different client NAMES, or briefly after expiry, when
 the de-listed chain is still serving whoever holds it while the new one is current.
 
-Because the cache is process-wide, every part of the app asking for "telemetry" gets a
+Because the cache is process-wide, every part of the app asking for the same host gets a
 client over the same connections.
 
 ## Why not just one static HttpClient?
@@ -193,8 +193,8 @@ that both happen to involve the word "dispose".
 Why rotate at all: DNS.
 
 ```
-1. handler resolves edge-gateway -> 172.18.0.5, opens connections, keeps them
-2. the edge-gateway container is recreated, Docker gives it 172.18.0.9
+1. handler resolves capture-gateway -> 172.18.0.5, opens connections, keeps them
+2. the capture-gateway container is recreated, Docker gives it 172.18.0.9
 3. DNS now says .9, but the pooled connections still point at .5, which is dead
 4. requests fail or hang until those connections error out
 ```

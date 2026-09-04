@@ -1,6 +1,6 @@
 apiVersion: v2
-name: industrial-platform
-description: Renderable Kubernetes prototype for the IndustrialPlatform telemetry pipeline
+name: tx-monitoring
+description: Renderable Kubernetes prototype for the TxMonitoring transaction risk-monitoring pipeline
 type: application
 version: 1.0.0
 appVersion: "1.0.0"

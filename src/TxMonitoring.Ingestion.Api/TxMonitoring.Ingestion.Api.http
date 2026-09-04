@@ -1,0 +1,13 @@
+@ApiHostAddr = http://localhost:5089
+
+### Liveness. Ingestion has no HTTP debug bypass: the only production-shaped path in
+### is capture-gateway -> gRPC UploadTransactions on port 5091. Deterministic demo
+### traffic enters through the feed emulator or the gateway endpoint below.
+GET {{ApiHostAddr}}/health
+
+### Readiness: required Kafka topics have usable metadata.
+GET {{ApiHostAddr}}/health/ready
+
+### gRPC contract probe without writing a client (grpcurl from mise.toml):
+### grpcurl -plaintext -import-path src/Protos -proto transactions.proto \
+###   localhost:5091 txmonitoring.ingestion.v1.TransactionIngestion/UploadTransactions

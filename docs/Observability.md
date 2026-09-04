@@ -11,15 +11,15 @@ Trace: story of a single req "how long did this take?" (Where is the bottleneck?
 
 An **instrument** is the thing you actually record measurements with -- "instrument" in the
 measuring-instrument sense, nothing to do with UI. A Meter is the factory that creates
-them, and it is identified by name so the exporter can subscribe: `AddMeter("Industrial.Sensor.Emulator")`.
+them, and it is identified by name so the exporter can subscribe: `AddMeter("TxMonitoring.Feed.Emulator")`.
 
 The four that matter, and how to pick:
 
 | instrument | shape | use when | example here |
 | --- | --- | --- | --- |
-| `Counter<T>` | only ever goes up | you are counting events that happened | `sensor.telemetry.dropped` |
+| `Counter<T>` | only ever goes up | you are counting events that happened | `feed.transaction.dropped` |
 | `UpDownCounter<T>` | up and down, you push each delta | a level you can track incrementally | -- |
-| `ObservableGauge<T>` | a callback OTel invokes at scrape time | a level you can read on demand | `sensor.channel.depth` |
+| `ObservableGauge<T>` | a callback OTel invokes at scrape time | a level you can read on demand | `feed.channel.depth` |
 | `Histogram<T>` | distribution, bucketed | you care about spread, not just the total | request durations |
 
 Counter vs Gauge is the one people get wrong. A Counter is a monotonic total -- "how many
@@ -140,17 +140,17 @@ The local stack is configured from checked-in artifacts rather than clicks in th
 | --- | --- |
 | `monitoring/otel-collector-config.yaml` | receives OTLP and batches metrics to Prometheus, logs to Loki, and traces to Tempo |
 | `monitoring/prometheus.yaml` | scrapes the collector exporter and loads rule files |
-| `monitoring/prometheus-alerts.yaml` | alerts on permanent loss, edge backlog, ingestion errors, diagnostics retry/DLQ failure, and alert-outbox backlog |
+| `monitoring/prometheus-alerts.yaml` | alerts on permanent loss, capture backlog, ingestion errors, detection retry/DLQ failure, velocity outages, and alert-outbox backlog |
 | `monitoring/grafana-datasources.yaml` | provisions Prometheus, Loki, and Tempo plus trace-to-log navigation |
 | `monitoring/grafana-dashboard-provider.yaml` | loads dashboards from disk |
-| `monitoring/grafana-dashboard-industrial-platform.json` | the `Industrial Platform Reliability` dashboard |
+| `monitoring/grafana-dashboard-tx-monitoring.json` | the `Transaction Monitoring Reliability` dashboard |
 
 The dashboard deliberately separates permanent-loss counters from durable-backlog gauges. A
-sensor acquisition drop or exhausted delivery retry is gone before the reliability boundary; an
-edge queue depth or oldest-age increase means accepted rows are delayed but still owned by the
-gateway. DLQ and edge-quarantine panels show different poison paths: diagnostics publishes Kafka
-poison records to `telemetry-events-dlq`, while the gateway retains deterministic cloud rejections
-in bounded SQLite forensic storage.
+feed generation drop or exhausted delivery retry is gone before the reliability boundary; a
+capture queue depth or oldest-age increase means accepted rows are delayed but still owned by
+the gateway. DLQ and capture-quarantine panels show different poison paths: detection publishes
+Kafka poison records to `transaction-events-dlq`, while the gateway retains deterministic
+ingestion rejections in bounded SQLite forensic storage.
 
 Prometheus, Loki, Tempo, and Grafana use named Compose volumes, so ordinary container restarts keep
 local history. `docker compose down -v` intentionally removes those volumes. This is demo
@@ -168,13 +168,13 @@ to accept new work:
 
 | service | readiness means |
 | --- | --- |
-| ingestion | the configured telemetry Kafka topic exists and has usable partitions |
-| diagnostics | Kafka topics are available, the consumer owns partitions, Postgres is reachable, and EF migrations are current |
-| Web API | both dashboard Kafka topics are available and the local broadcast consumer owns partitions |
-| edge gateway | its SQLite queue accepts a write transaction |
+| ingestion | the configured transaction Kafka topics exist and have usable partitions |
+| detection | Kafka topics are available, the consumer owns partitions, Postgres is reachable, and EF migrations are current |
+| Web API | transaction and alert Kafka topics are available and the local relay consumer owns partitions |
+| capture gateway | its SQLite queue accepts a write transaction |
 
-Cloud reachability does not belong in edge readiness. Store-and-forward exists so the gateway can
-remain ready to durably accept LAN readings while ingestion is unavailable; use
-`edge_cloud_reachable`, queue depth, and oldest age to observe that outage instead.
+Ingestion reachability does not belong in gateway readiness. Store-and-forward exists so the
+gateway can remain ready to durably accept LAN transactions while ingestion is unavailable; use
+`capture_ingestion_reachable`, queue depth, and oldest age to observe that outage instead.
 
 # Terminology

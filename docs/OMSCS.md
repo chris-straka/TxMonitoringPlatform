@@ -376,7 +376,7 @@ Three things that are always true and always forgotten:
 2. **The buffer must be bounded.** An unbounded queue converts backpressure into an OOM kill. Blocking on a full buffer _is_ the backpressure signal.
 3. **Two condition variables, not one.** One condvar means producers wake producers.
 
-> > This is `Channel<T>` in the sensor emulator. Bounded capacity 10,000, and on full it drops-and-counts rather than blocking, because a device with finite RAM would rather lose a temperature reading than stall acquisition. `docs/Networking.md` has the sizing arithmetic. The choice of _which_ of the three full-buffer policies to take — block, drop-newest, drop-oldest — is the whole design decision, and it depends entirely on what one lost item costs.
+> > This is `Channel<T>` in the feed emulator. Bounded capacity 10,000, and on full it drops-and-counts rather than blocking, because synthetic pre-custody load would rather lose a transaction than stall generation. `docs/Networking.md` has the sizing arithmetic. The choice of _which_ of the three full-buffer policies to take — block, drop-newest, drop-oldest — is the whole design decision, and it depends entirely on what one lost item costs.
 
 ## Concurrency vs parallelism
 
@@ -496,7 +496,7 @@ A normal filesystem updates data in place, which means seeks scattered across th
 
 > > The reason Kafka is fast isn't magic, it's that it does what the storage stack is best at: sequential appends, page cache instead of an application cache, and `sendfile()` to go from page cache to socket without copying into userspace. That last one is why "Kafka doesn't use much heap" — the OS is doing the caching.
 
-> > The SQLite WAL in the gateway is the journaling version of the same idea: append the intent, `fsync`, apply later. `docs/Networking.md` covers why that hop pays for an fsync per reading and the sensor hop doesn't.
+> > The SQLite WAL in the gateway is the journaling version of the same idea: append the intent, `fsync`, apply later. `docs/Networking.md` covers why that hop pays for an fsync per transaction and the feed hop doesn't.
 
 ## Caching semantics and invalidation
 
@@ -601,7 +601,7 @@ The router scheduling material, which is just backpressure with different vocabu
 
 **DRR "Deficit Round Robin"** is the practical version: each flow gets a **quantum** of bytes per turn, and whatever it couldn't use (because its next packet was too big) carries forward in a **deficit counter**. O(1) per visit, and it gives fair _byte_ throughput regardless of packet size. Plain round robin doesn't — a flow with big packets wins.
 
-> > This is the vocabulary for the gateway's shedding behaviour. `429 + Retry-After` is **policing** (drop, tell the client the rate). A bounded `Channel<T>` that blocks the producer is **shaping**. Per-device quotas so one chatty sensor can't starve the others is **fair queueing** — and DRR is the right mental model because readings aren't uniform in size. Worth knowing that "just add a queue" converts a loss problem into a latency problem rather than solving it.
+> > This is the vocabulary for the gateway's shedding behaviour. `429 + Retry-After` is **policing** (drop, tell the client the rate). A bounded `Channel<T>` that blocks the producer is **shaping**. Per-account quotas so one chatty account can't starve the others is **fair queueing** — and DRR is the right mental model because transactions aren't uniform in size. Worth knowing that "just add a queue" converts a loss problem into a latency problem rather than solving it.
 
 ## Consistent hashing
 
@@ -692,7 +692,7 @@ VT1 || VT2  iff  neither is less than the other
 
 Now `a -> b ⟺ VT(a) < VT(b)` in **both** directions, so you can finally _detect concurrency_ rather than just respect causality. The cost is O(N) per clock and per msg, which is why they don't scale to large N and why systems use them for conflict detection (Dynamo, Riak) rather than for ordering everything.
 
-> > **A W3C trace context is a causality mechanism.** `traceparent` propagates a trace ID plus the parent span ID across every hop, so the collector can reconstruct the happens-before graph of a request across the emulator, gateway, API, Kafka and worker. The reason spans nest correctly without synchronized clocks is that **parentage is explicit rather than inferred from timestamps** — the same reason Lamport used counters instead of clocks.
+> > **A W3C trace context is a causality mechanism.** `traceparent` propagates a trace ID plus the parent span ID across every hop, so the collector can reconstruct the happens-before graph of a request across the feed emulator, capture gateway, ingestion API, Kafka and detection worker. The reason spans nest correctly without synchronized clocks is that **parentage is explicit rather than inferred from timestamps** — the same reason Lamport used counters instead of clocks.
 > >
 > > Two practical consequences: (1) Kafka **breaks** the trace unless you inject `traceparent` into message headers and extract on consume, because the producer and consumer are different processes with no call stack between them; (2) span _durations_ still come from local clocks, so a child span can appear to start before its parent on a skewed host. The causal graph is trustworthy, the timeline is not.
 
@@ -732,7 +732,7 @@ Cassandra/Dynamo chose P+A. Spanner/Megastore chose P+C.
 
 **Idempotency** is the property that applying an operation twice has the same effect as once. `SET balance = 100` is idempotent; `balance -= 10` is not. When the operation isn't naturally idempotent you make it so with an **idempotency key** the receiver records before acting.
 
-> > This is the single most directly applicable thing in the whole DC course. My pipeline is ALO end to end: the emulator retries on failure, the gateway retries the cloud POST, Kafka redelivers on rebalance or offset-commit failure. So **every consumer has to be idempotent or dedupe**, and the natural key is `(deviceId, readingTimestamp)` or an explicit `MessageId`.
+> > This is the single most directly applicable thing in the whole DC course. The pipeline is ALO end to end past the gateway: the feed retries on failure, the gateway retries the ingestion batch, Kafka redelivers on rebalance or offset-commit failure. So **every consumer has to be idempotent or dedupe**, and the natural key is the explicit `MessageId`.
 > >
 > > The specific trap: committing the Kafka offset **before** the DB write means a crash in between loses the reading (at-most-once). Committing **after** means a crash in between redelivers it (at-least-once). There is no ordering of those two writes that gives exactly-once — you need the dedupe. `docs/Networking.md` says the same thing about gRPC: a stream dying after commit but before ACK is unresolvable at the transport layer.
 > >
@@ -820,7 +820,7 @@ All of this assumes **PWD (piecewise determinism)**: given the same starting sta
 
 **Spanner** gets strict serializability globally by making **clock uncertainty explicit**. TrueTime returns an _interval_ `[earliest, latest]` guaranteed to contain the real time, built on GPS and atomic clocks. A transaction picks commit timestamp `s = TT.now().latest`, then **waits until `TT.now().earliest > s`** before releasing locks. That deliberate wait (~2ε, single-digit ms) guarantees that any transaction starting later gets a strictly greater timestamp, which is what makes timestamps respect real-world order. **Spanner buys consistency with latency** — it doesn't beat CAP, it pays for C in the E branch of PACELC.
 
-> > The practical alternative for a microservices pipeline is the **saga**: no distributed lock at all, just a sequence of local transactions each with a compensating action. You give up atomicity and isolation and get availability. For sensor telemetry the question rarely arises, because ingest is idempotent appends rather than a transfer between two ledgers — which is itself the design lesson. **Avoiding distributed transactions is usually a data modelling decision, not an infrastructure one.**
+> > The practical alternative for a microservices pipeline is the **saga**: no distributed lock at all, just a sequence of local transactions each with a compensating action. You give up atomicity and isolation and get availability. For monitoring observations the question rarely arises, because ingest is idempotent appends rather than a transfer between two ledgers — which is itself the design lesson. **Avoiding distributed transactions is usually a data modelling decision, not an infrastructure one.**
 
 ---
 
@@ -838,7 +838,7 @@ The most useful framework I got from AOS, and the one nobody outside the course 
 - Lose a node in a **replicated** system: `D` holds (data still exists elsewhere), `Q` drops (less capacity).
 - Lose a node in a **partitioned** system: `Q` can hold (you still answer), `D` drops (part of the data is gone, so answers are incomplete).
 
-> > This is the vocabulary for graceful degradation. If the anomaly-detection worker is down, the dashboard can serve raw telemetry without anomaly annotations — **full yield, reduced harvest**, and that's a much better failure than a 503. Deciding this per-endpoint in advance is the difference between degradation and an outage. Search engines do exactly this: return results from the shards that answered rather than failing the query.
+> > This is the vocabulary for graceful degradation. If the detection worker is down, the dashboard can serve raw transactions without risk annotations — **full yield, reduced harvest**, and that's a much better failure than a 503. Deciding this per-endpoint in advance is the difference between degradation and an outage. Search engines do exactly this: return results from the shards that answered rather than failing the query.
 
 **Upgrades** are planned capacity loss and can be measured the same way: **rolling** (one node at a time, small continuous DQ loss, two versions coexist), **big flip** (half at once, large brief loss, no version mixing), **fast reboot** (all at once during a trough).
 

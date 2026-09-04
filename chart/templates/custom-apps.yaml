@@ -1,19 +1,19 @@
-{{- $edgeName := include "industrial-platform.appName" (dict "root" . "name" "edge-gateway") -}}
-{{- $ingestionName := include "industrial-platform.appName" (dict "root" . "name" "ingestion-api") -}}
-{{- $diagnosticsName := include "industrial-platform.appName" (dict "root" . "name" "diagnostics-worker") -}}
-{{- $sensorName := include "industrial-platform.appName" (dict "root" . "name" "sensor-emulator") -}}
-{{- $webApiName := include "industrial-platform.appName" (dict "root" . "name" "web-api") -}}
-{{- $dashboardName := include "industrial-platform.appName" (dict "root" . "name" "web-dashboard") -}}
+{{- $captureName := include "tx-monitoring.appName" (dict "root" . "name" "capture-gateway") -}}
+{{- $ingestionName := include "tx-monitoring.appName" (dict "root" . "name" "ingestion-api") -}}
+{{- $detectionName := include "tx-monitoring.appName" (dict "root" . "name" "detection-worker") -}}
+{{- $feedName := include "tx-monitoring.appName" (dict "root" . "name" "feed-emulator") -}}
+{{- $webApiName := include "tx-monitoring.appName" (dict "root" . "name" "web-api") -}}
+{{- $dashboardName := include "tx-monitoring.appName" (dict "root" . "name" "web-dashboard") -}}
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ $edgeName }}
+  name: {{ $captureName }}
   labels:
-    {{- include "industrial-platform.labels" . | nindent 4 }}
-    {{- include "industrial-platform.selectorLabels" (dict "root" . "component" "edge-gateway") | nindent 4 }}
+    {{- include "tx-monitoring.labels" . | nindent 4 }}
+    {{- include "tx-monitoring.selectorLabels" (dict "root" . "component" "capture-gateway") | nindent 4 }}
 spec:
   selector:
-    {{- include "industrial-platform.selectorLabels" (dict "root" . "component" "edge-gateway") | nindent 4 }}
+    {{- include "tx-monitoring.selectorLabels" (dict "root" . "component" "capture-gateway") | nindent 4 }}
   ports:
     - name: http
       port: 8080
@@ -22,15 +22,15 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ $edgeName }}-headless
+  name: {{ $captureName }}-headless
   labels:
-    {{- include "industrial-platform.labels" . | nindent 4 }}
-    {{- include "industrial-platform.selectorLabels" (dict "root" . "component" "edge-gateway") | nindent 4 }}
+    {{- include "tx-monitoring.labels" . | nindent 4 }}
+    {{- include "tx-monitoring.selectorLabels" (dict "root" . "component" "capture-gateway") | nindent 4 }}
 spec:
   clusterIP: None
   publishNotReadyAddresses: true
   selector:
-    {{- include "industrial-platform.selectorLabels" (dict "root" . "component" "edge-gateway") | nindent 4 }}
+    {{- include "tx-monitoring.selectorLabels" (dict "root" . "component" "capture-gateway") | nindent 4 }}
   ports:
     - name: http
       port: 8080
@@ -39,20 +39,20 @@ spec:
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: {{ $edgeName }}
+  name: {{ $captureName }}
   labels:
-    {{- include "industrial-platform.labels" . | nindent 4 }}
-    {{- include "industrial-platform.selectorLabels" (dict "root" . "component" "edge-gateway") | nindent 4 }}
+    {{- include "tx-monitoring.labels" . | nindent 4 }}
+    {{- include "tx-monitoring.selectorLabels" (dict "root" . "component" "capture-gateway") | nindent 4 }}
 spec:
-  serviceName: {{ $edgeName }}-headless
-  replicas: {{ .Values.edgeGateway.replicaCount }}
+  serviceName: {{ $captureName }}-headless
+  replicas: {{ .Values.captureGateway.replicaCount }}
   selector:
     matchLabels:
-      {{- include "industrial-platform.selectorLabels" (dict "root" . "component" "edge-gateway") | nindent 6 }}
+      {{- include "tx-monitoring.selectorLabels" (dict "root" . "component" "capture-gateway") | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "industrial-platform.selectorLabels" (dict "root" . "component" "edge-gateway") | nindent 8 }}
+        {{- include "tx-monitoring.selectorLabels" (dict "root" . "component" "capture-gateway") | nindent 8 }}
       {{- if .Values.istio.sidecarInjection }}
       annotations:
         sidecar.istio.io/inject: "true"
@@ -60,50 +60,50 @@ spec:
     spec:
       terminationGracePeriodSeconds: 30
       containers:
-        - name: edge-gateway
-          image: {{ include "industrial-platform.image" (dict "root" . "name" "edge-gateway") | quote }}
+        - name: capture-gateway
+          image: {{ include "tx-monitoring.image" (dict "root" . "name" "capture-gateway") | quote }}
           imagePullPolicy: {{ .Values.platform.imagePullPolicy }}
           ports:
             - name: http
               containerPort: 8080
               protocol: TCP
           env:
-            {{- include "industrial-platform.commonEnv" (dict "root" . "serviceName" "Industrial.Sensor.EdgeGateway") | nindent 12 }}
-            - name: Cloud__ApiUrl
+            {{- include "tx-monitoring.commonEnv" (dict "root" . "serviceName" "TxMonitoring.Capture.Gateway") | nindent 12 }}
+            - name: Ingestion__ApiUrl
               value: {{ printf "%s://%s:8081" (ternary "https" "http" .Values.transportSecurity.enabled) $ingestionName | quote }}
             - name: TransportSecurity__Enabled
               value: {{ .Values.transportSecurity.enabled | quote }}
             {{- if .Values.transportSecurity.enabled }}
             - name: TransportSecurity__ClientCertificatePath
-              value: /tls/edge/client.pfx
+              value: /tls/capture/client.pfx
             - name: TransportSecurity__ClientCertificatePassword
               valueFrom:
                 secretKeyRef:
-                  name: {{ required "transportSecurity.edgeGateway.secretName is required when transportSecurity.enabled=true" .Values.transportSecurity.edgeGateway.secretName | quote }}
-                  key: {{ required "transportSecurity.edgeGateway.clientCertificatePasswordKey is required when transportSecurity.enabled=true" .Values.transportSecurity.edgeGateway.clientCertificatePasswordKey | quote }}
+                  name: {{ required "transportSecurity.captureGateway.secretName is required when transportSecurity.enabled=true" .Values.transportSecurity.captureGateway.secretName | quote }}
+                  key: {{ required "transportSecurity.captureGateway.clientCertificatePasswordKey is required when transportSecurity.enabled=true" .Values.transportSecurity.captureGateway.clientCertificatePasswordKey | quote }}
             - name: TransportSecurity__TrustedServerCaPath
-              value: /tls/edge/ca.crt
+              value: /tls/capture/ca.crt
             {{- end }}
             - name: Buffer__Path
-              value: /data/edge-buffer.db
+              value: /data/capture-buffer.db
             - name: Buffer__MaxDepth
-              value: {{ .Values.edgeGateway.buffer.maxDepth | quote }}
+              value: {{ .Values.captureGateway.buffer.maxDepth | quote }}
             - name: Buffer__SettledIdRetentionHours
-              value: {{ .Values.edgeGateway.buffer.settledIdRetentionHours | quote }}
+              value: {{ .Values.captureGateway.buffer.settledIdRetentionHours | quote }}
             - name: Buffer__QuarantineRetentionHours
-              value: {{ .Values.edgeGateway.buffer.quarantineRetentionHours | quote }}
+              value: {{ .Values.captureGateway.buffer.quarantineRetentionHours | quote }}
             - name: Buffer__QuarantineMaxRows
-              value: {{ .Values.edgeGateway.buffer.quarantineMaxRows | quote }}
+              value: {{ .Values.captureGateway.buffer.quarantineMaxRows | quote }}
             - name: Uploader__BatchSize
-              value: {{ .Values.edgeGateway.uploader.batchSize | quote }}
+              value: {{ .Values.captureGateway.uploader.batchSize | quote }}
             - name: Uploader__IdleDelayMs
-              value: {{ .Values.edgeGateway.uploader.idleDelayMs | quote }}
+              value: {{ .Values.captureGateway.uploader.idleDelayMs | quote }}
             - name: Uploader__BaseBackoffSeconds
-              value: {{ .Values.edgeGateway.uploader.baseBackoffSeconds | quote }}
+              value: {{ .Values.captureGateway.uploader.baseBackoffSeconds | quote }}
             - name: Uploader__MaxBackoffSeconds
-              value: {{ .Values.edgeGateway.uploader.maxBackoffSeconds | quote }}
+              value: {{ .Values.captureGateway.uploader.maxBackoffSeconds | quote }}
             - name: Uploader__UploadTimeoutSeconds
-              value: {{ .Values.edgeGateway.uploader.uploadTimeoutSeconds | quote }}
+              value: {{ .Values.captureGateway.uploader.uploadTimeoutSeconds | quote }}
           startupProbe:
             httpGet:
               path: /health
@@ -128,24 +128,24 @@ spec:
             - name: buffer-data
               mountPath: /data
             {{- if .Values.transportSecurity.enabled }}
-            - name: edge-mtls
-              mountPath: /tls/edge
+            - name: capture-mtls
+              mountPath: /tls/capture
               readOnly: true
             {{- end }}
-          {{- with .Values.edgeGateway.resources }}
+          {{- with .Values.captureGateway.resources }}
           resources:
             {{- toYaml . | nindent 12 }}
           {{- end }}
       {{- if .Values.transportSecurity.enabled }}
       volumes:
-        - name: edge-mtls
+        - name: capture-mtls
           secret:
-            secretName: {{ required "transportSecurity.edgeGateway.secretName is required when transportSecurity.enabled=true" .Values.transportSecurity.edgeGateway.secretName | quote }}
+            secretName: {{ required "transportSecurity.captureGateway.secretName is required when transportSecurity.enabled=true" .Values.transportSecurity.captureGateway.secretName | quote }}
             defaultMode: 0440
             items:
-              - key: {{ required "transportSecurity.edgeGateway.clientCertificateKey is required when transportSecurity.enabled=true" .Values.transportSecurity.edgeGateway.clientCertificateKey | quote }}
+              - key: {{ required "transportSecurity.captureGateway.clientCertificateKey is required when transportSecurity.enabled=true" .Values.transportSecurity.captureGateway.clientCertificateKey | quote }}
                 path: client.pfx
-              - key: {{ required "transportSecurity.edgeGateway.trustedServerCaKey is required when transportSecurity.enabled=true" .Values.transportSecurity.edgeGateway.trustedServerCaKey | quote }}
+              - key: {{ required "transportSecurity.captureGateway.trustedServerCaKey is required when transportSecurity.enabled=true" .Values.transportSecurity.captureGateway.trustedServerCaKey | quote }}
                 path: ca.crt
       {{- end }}
   volumeClaimTemplates:
@@ -154,23 +154,23 @@ spec:
       spec:
         accessModes:
           - ReadWriteOnce
-        {{- with .Values.edgeGateway.storage.storageClass }}
+        {{- with .Values.captureGateway.storage.storageClass }}
         storageClassName: {{ . | quote }}
         {{- end }}
         resources:
           requests:
-            storage: {{ .Values.edgeGateway.storage.size }}
+            storage: {{ .Values.captureGateway.storage.size }}
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: {{ $ingestionName }}
   labels:
-    {{- include "industrial-platform.labels" . | nindent 4 }}
-    {{- include "industrial-platform.selectorLabels" (dict "root" . "component" "ingestion-api") | nindent 4 }}
+    {{- include "tx-monitoring.labels" . | nindent 4 }}
+    {{- include "tx-monitoring.selectorLabels" (dict "root" . "component" "ingestion-api") | nindent 4 }}
 spec:
   selector:
-    {{- include "industrial-platform.selectorLabels" (dict "root" . "component" "ingestion-api") | nindent 4 }}
+    {{- include "tx-monitoring.selectorLabels" (dict "root" . "component" "ingestion-api") | nindent 4 }}
   ports:
     - name: http
       port: 8080
@@ -184,17 +184,17 @@ kind: Deployment
 metadata:
   name: {{ $ingestionName }}
   labels:
-    {{- include "industrial-platform.labels" . | nindent 4 }}
-    {{- include "industrial-platform.selectorLabels" (dict "root" . "component" "ingestion-api") | nindent 4 }}
+    {{- include "tx-monitoring.labels" . | nindent 4 }}
+    {{- include "tx-monitoring.selectorLabels" (dict "root" . "component" "ingestion-api") | nindent 4 }}
 spec:
   replicas: {{ .Values.ingestionApi.replicaCount }}
   selector:
     matchLabels:
-      {{- include "industrial-platform.selectorLabels" (dict "root" . "component" "ingestion-api") | nindent 6 }}
+      {{- include "tx-monitoring.selectorLabels" (dict "root" . "component" "ingestion-api") | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "industrial-platform.selectorLabels" (dict "root" . "component" "ingestion-api") | nindent 8 }}
+        {{- include "tx-monitoring.selectorLabels" (dict "root" . "component" "ingestion-api") | nindent 8 }}
       {{- if .Values.istio.sidecarInjection }}
       annotations:
         sidecar.istio.io/inject: "true"
@@ -203,7 +203,7 @@ spec:
       terminationGracePeriodSeconds: 30
       containers:
         - name: ingestion-api
-          image: {{ include "industrial-platform.image" (dict "root" . "name" "ingestion-api") | quote }}
+          image: {{ include "tx-monitoring.image" (dict "root" . "name" "ingestion-api") | quote }}
           imagePullPolicy: {{ .Values.platform.imagePullPolicy }}
           ports:
             - name: http
@@ -213,7 +213,7 @@ spec:
               containerPort: 8081
               protocol: TCP
           env:
-            {{- include "industrial-platform.commonEnv" (dict "root" . "serviceName" "Industrial.Ingestion.Api") | nindent 12 }}
+            {{- include "tx-monitoring.commonEnv" (dict "root" . "serviceName" "TxMonitoring.Ingestion.Api") | nindent 12 }}
             - name: Kafka__BootstrapServers
               value: {{ .Values.platform.kafka.bootstrapServers | quote }}
             - name: Kafka__EventsTopic
@@ -285,19 +285,19 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ $diagnosticsName }}
+  name: {{ $detectionName }}
   labels:
-    {{- include "industrial-platform.labels" . | nindent 4 }}
-    {{- include "industrial-platform.selectorLabels" (dict "root" . "component" "diagnostics-worker") | nindent 4 }}
+    {{- include "tx-monitoring.labels" . | nindent 4 }}
+    {{- include "tx-monitoring.selectorLabels" (dict "root" . "component" "detection-worker") | nindent 4 }}
 spec:
-  replicas: {{ .Values.diagnosticsWorker.replicaCount }}
+  replicas: {{ .Values.detectionWorker.replicaCount }}
   selector:
     matchLabels:
-      {{- include "industrial-platform.selectorLabels" (dict "root" . "component" "diagnostics-worker") | nindent 6 }}
+      {{- include "tx-monitoring.selectorLabels" (dict "root" . "component" "detection-worker") | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "industrial-platform.selectorLabels" (dict "root" . "component" "diagnostics-worker") | nindent 8 }}
+        {{- include "tx-monitoring.selectorLabels" (dict "root" . "component" "detection-worker") | nindent 8 }}
       {{- if .Values.istio.sidecarInjection }}
       annotations:
         sidecar.istio.io/inject: "true"
@@ -305,16 +305,16 @@ spec:
     spec:
       terminationGracePeriodSeconds: 60
       containers:
-        - name: diagnostics-worker
-          image: {{ include "industrial-platform.image" (dict "root" . "name" "diagnostics-worker") | quote }}
+        - name: detection-worker
+          image: {{ include "tx-monitoring.image" (dict "root" . "name" "detection-worker") | quote }}
           imagePullPolicy: {{ .Values.platform.imagePullPolicy }}
           ports:
             - name: http
               containerPort: 8080
               protocol: TCP
           env:
-            {{- include "industrial-platform.commonEnv" (dict "root" . "serviceName" "Industrial.Diagnostics.Worker") | nindent 12 }}
-            - name: ConnectionStrings__IndustrialDb
+            {{- include "tx-monitoring.commonEnv" (dict "root" . "serviceName" "TxMonitoring.Detection.Worker") | nindent 12 }}
+            - name: ConnectionStrings__TxMonitoringDb
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.platform.applicationSecret.name | quote }}
@@ -322,7 +322,7 @@ spec:
             - name: Kafka__BootstrapServers
               value: {{ .Values.platform.kafka.bootstrapServers | quote }}
             - name: Kafka__GroupId
-              value: {{ .Values.diagnosticsWorker.kafkaGroupId | quote }}
+              value: {{ .Values.detectionWorker.kafkaGroupId | quote }}
             - name: Kafka__EventsTopic
               value: {{ .Values.platform.kafka.eventsTopic | quote }}
             - name: Kafka__AlertsTopic
@@ -330,28 +330,25 @@ spec:
             - name: Kafka__DeadLetterTopic
               value: {{ .Values.platform.kafka.deadLetterTopic | quote }}
             - name: Kafka__ReadinessTimeoutSeconds
-              value: {{ .Values.diagnosticsWorker.kafkaReadinessTimeoutSeconds | quote }}
+              value: {{ .Values.detectionWorker.kafkaReadinessTimeoutSeconds | quote }}
             - name: Consumer__BaseBackoffSeconds
-              value: {{ .Values.diagnosticsWorker.consumer.baseBackoffSeconds | quote }}
+              value: {{ .Values.detectionWorker.consumer.baseBackoffSeconds | quote }}
             - name: Consumer__MaxBackoffSeconds
-              value: {{ .Values.diagnosticsWorker.consumer.maxBackoffSeconds | quote }}
+              value: {{ .Values.detectionWorker.consumer.maxBackoffSeconds | quote }}
             - name: Outbox__IdleDelayMs
-              value: {{ .Values.diagnosticsWorker.outbox.idleDelayMs | quote }}
+              value: {{ .Values.detectionWorker.outbox.idleDelayMs | quote }}
             - name: Outbox__BaseBackoffSeconds
-              value: {{ .Values.diagnosticsWorker.outbox.baseBackoffSeconds | quote }}
+              value: {{ .Values.detectionWorker.outbox.baseBackoffSeconds | quote }}
             - name: Outbox__MaxBackoffSeconds
-              value: {{ .Values.diagnosticsWorker.outbox.maxBackoffSeconds | quote }}
+              value: {{ .Values.detectionWorker.outbox.maxBackoffSeconds | quote }}
             - name: Outbox__PublishedRetentionHours
-              value: {{ .Values.diagnosticsWorker.outbox.publishedRetentionHours | quote }}
+              value: {{ .Values.detectionWorker.outbox.publishedRetentionHours | quote }}
             - name: Outbox__MaintenanceIntervalSeconds
-              value: {{ .Values.diagnosticsWorker.outbox.maintenanceIntervalSeconds | quote }}
-            - name: Gemini__ApiKey
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.platform.applicationSecret.name | quote }}
-                  key: {{ .Values.platform.applicationSecret.geminiApiKeyKey | quote }}
-            - name: Gemini__Model
-              value: {{ .Values.diagnosticsWorker.geminiModel | quote }}
+              value: {{ .Values.detectionWorker.outbox.maintenanceIntervalSeconds | quote }}
+            # Velocity cache endpoint only. Redis holds derived velocity windows; Kafka
+            # consumption, Postgres persistence, and alerting never depend on it.
+            - name: Velocity__Configuration
+              value: {{ required "detectionWorker.velocity.configuration must point at an external/managed Redis endpoint" .Values.detectionWorker.velocity.configuration | quote }}
           startupProbe:
             httpGet:
               path: /health
@@ -372,7 +369,7 @@ spec:
             periodSeconds: 5
             timeoutSeconds: 5
             failureThreshold: 3
-          {{- with .Values.diagnosticsWorker.resources }}
+          {{- with .Values.detectionWorker.resources }}
           resources:
             {{- toYaml . | nindent 12 }}
           {{- end }}
@@ -380,19 +377,19 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ $sensorName }}
+  name: {{ $feedName }}
   labels:
-    {{- include "industrial-platform.labels" . | nindent 4 }}
-    {{- include "industrial-platform.selectorLabels" (dict "root" . "component" "sensor-emulator") | nindent 4 }}
+    {{- include "tx-monitoring.labels" . | nindent 4 }}
+    {{- include "tx-monitoring.selectorLabels" (dict "root" . "component" "feed-emulator") | nindent 4 }}
 spec:
-  replicas: {{ .Values.sensorEmulator.replicaCount }}
+  replicas: {{ .Values.feedEmulator.replicaCount }}
   selector:
     matchLabels:
-      {{- include "industrial-platform.selectorLabels" (dict "root" . "component" "sensor-emulator") | nindent 6 }}
+      {{- include "tx-monitoring.selectorLabels" (dict "root" . "component" "feed-emulator") | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "industrial-platform.selectorLabels" (dict "root" . "component" "sensor-emulator") | nindent 8 }}
+        {{- include "tx-monitoring.selectorLabels" (dict "root" . "component" "feed-emulator") | nindent 8 }}
       {{- if .Values.istio.sidecarInjection }}
       annotations:
         sidecar.istio.io/inject: "true"
@@ -400,22 +397,22 @@ spec:
     spec:
       terminationGracePeriodSeconds: 30
       containers:
-        - name: sensor-emulator
-          image: {{ include "industrial-platform.image" (dict "root" . "name" "sensor-emulator") | quote }}
+        - name: feed-emulator
+          image: {{ include "tx-monitoring.image" (dict "root" . "name" "feed-emulator") | quote }}
           imagePullPolicy: {{ .Values.platform.imagePullPolicy }}
           env:
-            {{- include "industrial-platform.commonEnv" (dict "root" . "serviceName" "Industrial.Sensor.Emulator") | nindent 12 }}
+            {{- include "tx-monitoring.commonEnv" (dict "root" . "serviceName" "TxMonitoring.Feed.Emulator") | nindent 12 }}
             - name: Gateway__Url
-              value: {{ printf "http://%s:8080" $edgeName | quote }}
-            - name: Emulator__DeviceCount
-              value: {{ .Values.sensorEmulator.deviceCount | quote }}
-            - name: Emulator__IntervalSeconds
-              value: {{ .Values.sensorEmulator.intervalSeconds | quote }}
-            - name: Emulator__BufferCapacity
-              value: {{ .Values.sensorEmulator.bufferCapacity | quote }}
-            - name: Emulator__ReplicaId
-              value: {{ .Values.sensorEmulator.replicaId | quote }}
-          {{- with .Values.sensorEmulator.resources }}
+              value: {{ printf "http://%s:8080" $captureName | quote }}
+            - name: Generator__AccountCount
+              value: {{ .Values.feedEmulator.accountCount | quote }}
+            - name: Generator__IntervalSeconds
+              value: {{ .Values.feedEmulator.intervalSeconds | quote }}
+            - name: Generator__BufferCapacity
+              value: {{ .Values.feedEmulator.bufferCapacity | quote }}
+            - name: Generator__ReplicaId
+              value: {{ .Values.feedEmulator.replicaId | quote }}
+          {{- with .Values.feedEmulator.resources }}
           resources:
             {{- toYaml . | nindent 12 }}
           {{- end }}
@@ -425,11 +422,11 @@ kind: Service
 metadata:
   name: {{ $webApiName }}
   labels:
-    {{- include "industrial-platform.labels" . | nindent 4 }}
-    {{- include "industrial-platform.selectorLabels" (dict "root" . "component" "web-api") | nindent 4 }}
+    {{- include "tx-monitoring.labels" . | nindent 4 }}
+    {{- include "tx-monitoring.selectorLabels" (dict "root" . "component" "web-api") | nindent 4 }}
 spec:
   selector:
-    {{- include "industrial-platform.selectorLabels" (dict "root" . "component" "web-api") | nindent 4 }}
+    {{- include "tx-monitoring.selectorLabels" (dict "root" . "component" "web-api") | nindent 4 }}
   ports:
     - name: http
       port: 8080
@@ -440,17 +437,17 @@ kind: Deployment
 metadata:
   name: {{ $webApiName }}
   labels:
-    {{- include "industrial-platform.labels" . | nindent 4 }}
-    {{- include "industrial-platform.selectorLabels" (dict "root" . "component" "web-api") | nindent 4 }}
+    {{- include "tx-monitoring.labels" . | nindent 4 }}
+    {{- include "tx-monitoring.selectorLabels" (dict "root" . "component" "web-api") | nindent 4 }}
 spec:
   replicas: {{ .Values.webApi.replicaCount }}
   selector:
     matchLabels:
-      {{- include "industrial-platform.selectorLabels" (dict "root" . "component" "web-api") | nindent 6 }}
+      {{- include "tx-monitoring.selectorLabels" (dict "root" . "component" "web-api") | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "industrial-platform.selectorLabels" (dict "root" . "component" "web-api") | nindent 8 }}
+        {{- include "tx-monitoring.selectorLabels" (dict "root" . "component" "web-api") | nindent 8 }}
       {{- if .Values.istio.sidecarInjection }}
       annotations:
         sidecar.istio.io/inject: "true"
@@ -459,14 +456,14 @@ spec:
       terminationGracePeriodSeconds: 30
       containers:
         - name: web-api
-          image: {{ include "industrial-platform.image" (dict "root" . "name" "web-api") | quote }}
+          image: {{ include "tx-monitoring.image" (dict "root" . "name" "web-api") | quote }}
           imagePullPolicy: {{ .Values.platform.imagePullPolicy }}
           ports:
             - name: http
               containerPort: 8080
               protocol: TCP
           env:
-            {{- include "industrial-platform.commonEnv" (dict "root" . "serviceName" "Industrial.Web.Api") | nindent 12 }}
+            {{- include "tx-monitoring.commonEnv" (dict "root" . "serviceName" "TxMonitoring.Web.Api") | nindent 12 }}
             - name: Kafka__BootstrapServers
               value: {{ .Values.platform.kafka.bootstrapServers | quote }}
             - name: Kafka__GroupId
@@ -509,11 +506,11 @@ kind: Service
 metadata:
   name: {{ $dashboardName }}
   labels:
-    {{- include "industrial-platform.labels" . | nindent 4 }}
-    {{- include "industrial-platform.selectorLabels" (dict "root" . "component" "web-dashboard") | nindent 4 }}
+    {{- include "tx-monitoring.labels" . | nindent 4 }}
+    {{- include "tx-monitoring.selectorLabels" (dict "root" . "component" "web-dashboard") | nindent 4 }}
 spec:
   selector:
-    {{- include "industrial-platform.selectorLabels" (dict "root" . "component" "web-dashboard") | nindent 4 }}
+    {{- include "tx-monitoring.selectorLabels" (dict "root" . "component" "web-dashboard") | nindent 4 }}
   ports:
     - name: http
       port: 80
@@ -524,17 +521,17 @@ kind: Deployment
 metadata:
   name: {{ $dashboardName }}
   labels:
-    {{- include "industrial-platform.labels" . | nindent 4 }}
-    {{- include "industrial-platform.selectorLabels" (dict "root" . "component" "web-dashboard") | nindent 4 }}
+    {{- include "tx-monitoring.labels" . | nindent 4 }}
+    {{- include "tx-monitoring.selectorLabels" (dict "root" . "component" "web-dashboard") | nindent 4 }}
 spec:
   replicas: {{ .Values.webDashboard.replicaCount }}
   selector:
     matchLabels:
-      {{- include "industrial-platform.selectorLabels" (dict "root" . "component" "web-dashboard") | nindent 6 }}
+      {{- include "tx-monitoring.selectorLabels" (dict "root" . "component" "web-dashboard") | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "industrial-platform.selectorLabels" (dict "root" . "component" "web-dashboard") | nindent 8 }}
+        {{- include "tx-monitoring.selectorLabels" (dict "root" . "component" "web-dashboard") | nindent 8 }}
       {{- if .Values.istio.sidecarInjection }}
       annotations:
         sidecar.istio.io/inject: "true"
@@ -542,7 +539,7 @@ spec:
     spec:
       containers:
         - name: web-dashboard
-          image: {{ include "industrial-platform.image" (dict "root" . "name" "web-dashboard") | quote }}
+          image: {{ include "tx-monitoring.image" (dict "root" . "name" "web-dashboard") | quote }}
           imagePullPolicy: {{ .Values.platform.imagePullPolicy }}
           ports:
             - name: http

@@ -2,7 +2,7 @@
 # Dump the repo as one markdown blob for a bot with no filesystem access.
 #
 #   ./scripts/AI.sh                                   # whole repo
-#   ./scripts/AI.sh src/Industrial.Sensor.EdgeGateway # just one project
+#   ./scripts/AI.sh src/TxMonitoring.Capture.Gateway # just one project
 #   ./scripts/AI.sh src/Protos docs                   # several paths
 #
 # Writes to AI.md (gitignored) and copies to the clipboard if one is available.
@@ -70,4 +70,4 @@ else echo "No clipboard tool found -- attach $OUT directly."
 fi
 
 # Clipboards silently truncate large payloads. Past ~200 KB, attach the file instead.
-[ "$bytes" -gt 200000 ] && echo "WARNING: large dump. Attach $OUT as a file rather than pasting, or scope it: ./scripts/AI.sh src/Industrial.Sensor.EdgeGateway"
+[ "$bytes" -gt 200000 ] && echo "WARNING: large dump. Attach $OUT as a file rather than pasting, or scope it: ./scripts/AI.sh src/TxMonitoring.Capture.Gateway"

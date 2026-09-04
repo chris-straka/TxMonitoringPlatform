@@ -32,8 +32,8 @@ locals {
         forceString = true
       },
       {
-        name        = "images.edge-gateway"
-        value       = var.application_images.edge_gateway
+        name        = "images.capture-gateway"
+        value       = var.application_images.capture_gateway
         forceString = true
       },
       {
@@ -42,13 +42,13 @@ locals {
         forceString = true
       },
       {
-        name        = "images.diagnostics-worker"
-        value       = var.application_images.diagnostics_worker
+        name        = "images.detection-worker"
+        value       = var.application_images.detection_worker
         forceString = true
       },
       {
-        name        = "images.sensor-emulator"
-        value       = var.application_images.sensor_emulator
+        name        = "images.feed-emulator"
+        value       = var.application_images.feed_emulator
         forceString = true
       },
       {
@@ -59,6 +59,11 @@ locals {
       {
         name        = "images.web-dashboard"
         value       = var.application_images.web_dashboard
+        forceString = true
+      },
+      {
+        name        = "detectionWorker.velocity.configuration"
+        value       = var.velocity_redis_configuration
         forceString = true
       },
       {
@@ -101,11 +106,6 @@ locals {
       {
         name        = "externalSecret.secretStoreRef.kind"
         value       = var.external_secret.secret_store_kind
-        forceString = true
-      },
-      {
-        name        = "externalSecret.remoteRefs.geminiApiKey.key"
-        value       = var.external_secret.gemini_api_key_remote_key
         forceString = true
       },
       {
@@ -152,21 +152,21 @@ resource "helm_release" "argocd" {
 # kubectl_manifest can create the Argo Application after the Helm release installs its CRD. The
 # generated manifest contains deployment references only; application secret values never enter
 # Terraform configuration, plans, state, or the Argo Application object.
-resource "kubectl_manifest" "industrial_platform_app" {
+resource "kubectl_manifest" "tx_monitoring_app" {
   depends_on = [
     helm_release.argocd,
     helm_release.external_secrets,
     helm_release.istio_ingress,
-    kafka_topic.telemetry_alerts,
-    kafka_topic.telemetry_events,
-    kafka_topic.telemetry_events_dead_letter,
+    kafka_topic.risk_alerts,
+    kafka_topic.transaction_events,
+    kafka_topic.transaction_events_dead_letter,
   ]
 
   yaml_body = yamlencode({
     apiVersion = "argoproj.io/v1alpha1"
     kind       = "Application"
     metadata = {
-      name      = "industrial-platform"
+      name      = "tx-monitoring"
       namespace = kubernetes_namespace_v1.argocd.metadata[0].name
     }
     spec = {

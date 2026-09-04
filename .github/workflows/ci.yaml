@@ -56,8 +56,6 @@ jobs:
 
       - name: Validate Compose model
         run: docker compose config --quiet
-        env:
-          GEMINI_API_KEY: ci-config-validation-only
 
       - uses: azure/setup-helm@v4
         with:
@@ -72,12 +70,11 @@ jobs:
 
       - name: Render default and optional Helm resources
         run: |
-          helm template industrial-platform chart --namespace industrial-platform --output-dir "$RUNNER_TEMP/helm-default"
-          helm template industrial-platform chart \
-            --namespace industrial-platform \
+          helm template tx-monitoring chart --namespace tx-monitoring --output-dir "$RUNNER_TEMP/helm-default"
+          helm template tx-monitoring chart \
+            --namespace tx-monitoring \
             --output-dir "$RUNNER_TEMP/helm-optional" \
             --set externalSecret.enabled=true \
-            --set externalSecret.remoteRefs.geminiApiKey.key=ci/gemini \
             --set externalSecret.remoteRefs.postgresConnectionString.key=ci/postgres-connection \
             --set externalSecret.remoteRefs.postgresPassword.key=ci/postgres-password \
             --set istio.enabled=true \
@@ -86,7 +83,6 @@ jobs:
             --set transportSecurity.edgeGateway.secretName=ci-edge-mtls
           helm lint chart \
             --set externalSecret.enabled=true \
-            --set externalSecret.remoteRefs.geminiApiKey.key=ci/gemini \
             --set externalSecret.remoteRefs.postgresConnectionString.key=ci/postgres-connection \
             --set externalSecret.remoteRefs.postgresPassword.key=ci/postgres-password \
             --set istio.enabled=true \
@@ -103,5 +99,3 @@ jobs:
 
       - name: Run isolated failure and recovery suite
         run: ./scripts/e2e.sh
-        env:
-          GEMINI_API_KEY: e2e-config-validation-only

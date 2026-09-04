@@ -3,7 +3,7 @@ WORKDIR /src
 COPY ["Directory.Build.props", "./"]
 COPY ["src/TxMonitoring.Capture.Gateway/TxMonitoring.Capture.Gateway.csproj", "src/TxMonitoring.Capture.Gateway/"]
 COPY ["src/TxMonitoring.Shared/TxMonitoring.Shared.csproj", "src/TxMonitoring.Shared/"]
-COPY ["src/Protos/telemetry.proto", "src/Protos/"]
+COPY ["src/Protos/transactions.proto", "src/Protos/"]
 RUN dotnet restore "src/TxMonitoring.Capture.Gateway/TxMonitoring.Capture.Gateway.csproj"
 COPY . .
 RUN dotnet publish "src/TxMonitoring.Capture.Gateway/TxMonitoring.Capture.Gateway.csproj" -c Release -o /app/publish --no-restore
@@ -18,7 +18,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 # The buffer lives on a mounted volume, NOT in the image layer. If it lived in the
-# container filesystem, `docker compose restart edge-gateway` would silently wipe the
+# container filesystem, `docker compose restart capture-gateway` would silently wipe the
 # queue -- and "restart the gateway mid-outage and watch it resume" is the demo.
 VOLUME ["/data"]
 COPY --from=build /app/publish .

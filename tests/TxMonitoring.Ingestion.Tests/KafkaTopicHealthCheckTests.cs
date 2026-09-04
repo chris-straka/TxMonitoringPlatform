@@ -8,7 +8,7 @@ namespace TxMonitoring.Ingestion.Tests;
 
 public sealed class KafkaTopicHealthCheckTests
 {
-    private const string EventsTopic = "telemetry-events";
+    private const string EventsTopic = "transaction-events";
 
     [Fact]
     public void ReportsHealthyOnlyWhenTopicPartitionsHaveLeadersAndReplicas()

@@ -1,15 +1,15 @@
 # Where the network hops are
 
 ```
-sensor  --HTTP/JSON-->  edge gateway  --gRPC/HTTP2-->  ingestion api  --Kafka-->  worker
+feed  --HTTP/JSON-->  capture gateway  --gRPC/HTTP2-->  ingestion api  --Kafka-->  detection
         (LAN, cheap)                  (WAN, flaky)                    (binary/TCP)
 ```
 
 Each hop picks its own protocol because each hop has a different problem.
 
-Sensor -> gateway is on the same LAN with many dumb clients, so it stays dead simple.
-Gateway -> cloud crosses the internet with one client and a continuous stream, so it's gRPC.
-Inside the cloud it's Kafka, because there is more than one consumer.
+Feed -> gateway is on the same LAN with simple clients, so it stays dead simple.
+Gateway -> ingestion crosses the internet with one client and a continuous stream, so it's gRPC.
+Past ingestion it's Kafka, because there is more than one consumer.
 
 # HttpClient and sockets
 
@@ -39,21 +39,21 @@ Fix: keep the sender and the worker separate, resolve the sender from a scope pe
 
 # Thundering Herd
 
-If the gateway restarts, 5,000 sensors throw at once.
+If the gateway restarts, 5,000 feed generators throw at once.
 Without jitter they all wait the same 2s and hammer it at the same millisecond, knocking it over again.
 
 Polly fixes this with:
 
 1. Exponential backoff (wait longer each failure: 2s, 4s, 8s)
-2. Jitter (one sensor waits 2.1s, another 2.7s)
+2. Jitter (one generator waits 2.1s, another 2.7s)
 
-> Who owns the problem depends on how dumb the sensor is
+> Who owns the problem depends on how dumb the client is
 
 A truly dumb sensor (4-20mA, Modbus RTU, HART) has no network stack.
 The gateway POLLS it. It can't stampede because it never initiates anything.
 
 A mid-tier IIoT sensor (ESP32 running MQTT/HTTP) does initiate, and its firmware has backoff built in.
-My emulator is a .NET process, so it's in this category and Polly there is honest.
+The feed emulator is a .NET process, so it's in this category and Polly there is honest.
 
 If clients genuinely can't back off, the fix moves to the SERVER:
 bounded queue + return 429 with a RANDOMIZED `Retry-After`, so the server dictates the spread.
@@ -81,7 +81,7 @@ Microsoft warns this can duplicate writes.
 That's true if the write is identified by WHEN it arrived.
 It's false if the write carries its own identity.
 
-Every reading mints a `MessageId` at the SENSOR.
+Every transaction mints a `MessageId` at the feed origin.
 The gateway has a unique index on it, so a retried POST collapses into the row that already exists.
 
 Retry safety is not a property of the verb. It's a property of the payload.
@@ -95,7 +95,7 @@ Same idea as Stripe's `Idempotency-Key` header (publicly documented, server-to-s
 A connection must return responses in request order.
 Send A (slow) and B (fast) and B is stuck behind A.
 
-My emulator experiences NONE of this, because it only has one request in flight at a time.
+The feed emulator experiences NONE of this, because it only has one request in flight at a time.
 There is never a second request queued behind the first.
 .NET also opens several parallel connections per host, so even concurrent requests mostly dodge it.
 
@@ -119,14 +119,14 @@ You can't deploy a new TCP. UDP is the escape hatch.
 
 # Why gRPC on the gateway -> cloud hop
 
-On the emulator's old direct-to-cloud POST loop, HTTP/2 bought almost nothing.
+On the feed's old direct-to-ingestion POST loop, HTTP/2 bought almost nothing.
 One request in flight means no multiplexing to do.
 
 On the gateway hop it earns its keep:
 
 1. JSON is text-heavy and needs repetitive string parsing to extract (CPU)
-2. That link carries a continuous stream of batched telemetry, i.e. genuinely concurrent traffic on one connection
-3. `telemetry.proto` is a shared schema both sides generate from, so a renamed field is a compile error
+2. That link carries a continuous stream of batched transactions, i.e. genuinely concurrent traffic on one connection
+3. `transactions.proto` is a shared schema both sides generate from, so a renamed field is a compile error
 
 Compose gives this WAN-shaped hop its own HTTPS port pinned to HTTP/2. TLS therefore supplies ALPN,
 while the separate HTTP/1.1 port keeps health and manual REST checks simple. The gateway and
@@ -154,7 +154,7 @@ Nothing below the gRPC layer changes when you pick a different one.
 Same connection, same protocol, same framing.
 Calling that a change of transport is wrong and it hides where the real trade is.
 
-`UploadTelemetry` is unary, carrying a `repeated TelemetryReading` field.
+`UploadTransactions` is unary, carrying a `repeated TransactionRecord` field.
 
 **Rejected: client streaming**, one message per reading on one open stream.
 It is NOT slower in round trips -- the client fires all 200 messages without waiting for a reply between them, so both shapes are one round trip.
@@ -165,32 +165,32 @@ That ceiling is the only thing streaming would relieve here, and this batch neve
 `Uploader:BatchSize` is 200 and validates to at most 10,000; the ceiling sits near 50,000.
 Paying real code complexity to lift a limit four times above the configurable maximum is not a trade.
 
-> Streaming IS right for sensor data. Just not on this hop.
+> Streaming IS right for a live feed. Just not on this hop.
 
-A device holding a connection open and pushing readings the instant it measures them is the textbook streaming case, and bidirectional with a per-reading ACK would be the better shape for it.
+A device holding a connection open and pushing measurements the instant it takes them is the textbook streaming case, and bidirectional with a per-message ACK would be the better shape for it.
 
 The uploader does not do that.
 It wakes up, selects 200 rows, sends them, deletes what settled, and sleeps.
-The readings already happened and are already on disk -- there is no live flow to hold a connection open for, only a pile of rows at rest to move.
+The transactions already happened and are already on disk -- there is no live flow to hold a connection open for, only a pile of rows at rest to move.
 
-Sensor -> gateway is a live feed. Gateway -> cloud is a batch drain. The call shape follows the job.
+Feed -> gateway is a live feed. Gateway -> ingestion is a batch drain. The call shape follows the job.
 
 # Why a batch and not one reading per call
 
 Batching is sized by outage recovery, not by steady state.
-At 200 a batch, draining a 100,000-reading buffer is 500 round trips.
-One reading per call is 100,000, and the gateway is still taking new readings while it drains, so a slow drain is a buffer that never catches up.
+At 200 a batch, draining a 100,000-transaction buffer is 500 round trips.
+One transaction per call is 100,000, and the gateway is still taking new transactions while it drains, so a slow drain is a buffer that never catches up.
 
-**Rejected: unary-per-reading.**
+**Rejected: unary-per-transaction.**
 It makes every response trivially per-record, which is the one thing a batch has to work for.
-The cost is a round trip per reading on the hop that has the most to move at exactly the worst time.
+The cost is a round trip per transaction on the hop that has the most to move at exactly the worst time.
 
 Batch size is a straight trade.
 Larger means fewer round trips and more readings re-sent when a response never arrives, since an ambiguous failure re-sends everything in flight.
-The ceiling is not tuning, though: one batch is one gRPC message under a 4 MB `MaxReceiveMessageSize`, which puts ~84 bytes a reading near 50,000.
+The ceiling is not tuning, though: one batch is one gRPC message under a 4 MB `MaxReceiveMessageSize`, which puts roughly a hundred bytes a transaction in the tens of thousands.
 
-Batching costs nothing in correctness now that `TelemetryResponse` names readings by `MessageId` rather than counting a prefix.
-The cloud can accept, reject, or stay silent about any reading in the batch independently.
+Batching costs nothing in correctness now that `IngestResponse` names transactions by `MessageId` rather than counting a prefix.
+Ingestion can accept, reject, or stay silent about any transaction in the batch independently.
 
 # Protocol layering
 
@@ -214,44 +214,44 @@ Confluent.Kafka wraps librdkafka, which speaks this natively.
 
 | layer | buffer | survives process death | when full |
 | --- | --- | --- | --- |
-| sensor | RAM, `Channel<T>` | no | drops the reading, counts it, logs it |
+| feed | RAM, `Channel<T>` | no | drops the transaction, counts it, logs it |
 | gateway | disk, SQLite WAL, fsync per commit | yes | sheds with 429 + Retry-After |
 
-The sensor is allowed to lose data because it is a device with finite RAM and a lost
-temperature sample is cheap. The gateway is not, so it pays for an fsync per reading.
+The feed is allowed to lose data because it is synthetic load with finite RAM and a lost
+pre-custody transaction is cheap. The gateway is not, so it pays for an fsync per transaction.
 
-Sizing follows from the arithmetic, not from taste. `Emulator:BufferCapacity` is 10,000
-readings; 4 devices at one reading every 2 seconds is 2 readings/second; 10,000 / 2 =
-5,000 seconds, so the sensor absorbs about 83 minutes of gateway outage before it drops
-anything. Change the device count or the interval and that number moves.
+Sizing follows from the arithmetic, not from taste. `Generator:BufferCapacity` is 10,000
+transactions; 4 accounts at one transaction every 5 seconds is 0.8 transactions/second;
+10,000 / 0.8 = 12,500 seconds, so the feed absorbs about 3.5 hours of gateway outage
+before it drops anything. Change the account count or the interval and that number moves.
 
 Bounded is what prevents an OOM kill. An unbounded channel would grow until the process
 is killed during a long outage, losing everything already buffered rather than only the
 newest reading.
 
-See Fintech.md for why this table inverts when the item is a payment.
+See Fintech.md for why the feed row stays RAM even when the item is money.
 
 # The durability handoff
 
 > A component may delete its copy only once something that survives a restart holds it.
 
-This is the rule the whole store-and-forward path is built on, and it is why `UploadTelemetry`
+This is the rule the whole store-and-forward path is built on, and it is why `UploadTransactions`
 answers when it does.
 
-`TelemetryResponse` is not a receipt. It is a TRANSFER OF CUSTODY.
-The gateway deletes the SQLite row for every id the cloud names, so an id in `accepted_message_ids`
-is a claim that the reading is now somebody else's problem.
-Claiming that before it is true loses the reading permanently: the gateway has already forgotten it,
+`IngestResponse` is not a receipt. It is a TRANSFER OF CUSTODY.
+The gateway deletes the SQLite row for every id ingestion names, so an id in `accepted_message_ids`
+is a claim that the transaction is now somebody else's problem.
+Claiming that before it is true loses the transaction permanently: the gateway has already forgotten it,
 and the only other copy was a local variable in a process that just died.
 
 The chain is a sequence of custody transfers, and each hop releases only after the next one commits.
 
 | holder | how it survives | releases when |
 | --- | --- | --- |
-| sensor | nothing -- RAM | the gateway returns 202 |
-| gateway | SQLite WAL, `synchronous=FULL` | the cloud names the id in a response |
+| feed | nothing -- RAM | the gateway returns 202 |
+| gateway | SQLite WAL, `synchronous=FULL` | ingestion names the id in a response |
 | Kafka | replicated partition log | retention expires, long after the worker has consumed |
-| Postgres | the system of record | never |
+| Postgres | the decision record | never |
 
 Note what the ingestion API is NOT in that table.
 It has no store of its own -- no disk, no queue, nothing that outlives the method call.
@@ -277,12 +277,12 @@ producer session, which is why consumers remain idempotent by `MessageId`.
 
 `202 Accepted` means "I have taken responsibility for doing this later, no promises."
 That is a fine answer to a caller that keeps its own copy, which is why the gateway's receiver returns it
-to the sensor -- the gateway really has committed to disk by then, and the sensor was never going to
+to the feed -- the gateway really has committed to disk by then, and the feed was never going to
 retain anything anyway.
 
 It is the wrong answer to a caller that DELETES on it.
 A gateway acting on 202 would be discarding data on a promise instead of on a fact.
-`UploadTelemetry` is semantically a 200: this happened.
+`UploadTransactions` is semantically a 200: this happened.
 
 **Rejected: giving the ingestion API a durable buffer of its own**, so it could accept while Kafka is down.
 That is store-and-forward one layer up, and it would work.
@@ -296,12 +296,12 @@ after that write succeeds.
 
 > Durability comes before batching, never after
 
-Batching trades latency for throughput: reading 1 waits for reading 200 before anything is sent.
-That trade is only acceptable while reading 1 is already safe.
-Buffer in RAM and batch from there, and you have converted "one request per reading is expensive" into
-"a crash loses 200 readings", which is a far worse problem than the one you set out to solve.
+Batching trades latency for throughput: transaction 1 waits for transaction 200 before anything is sent.
+That trade is only acceptable while transaction 1 is already safe.
+Buffer in RAM and batch from there, and you have converted "one request per transaction is expensive" into
+"a crash loses 200 transactions", which is a far worse problem than the one you set out to solve.
 
-The gateway gets this order right: fsync to SQLite, ACK the sensor, and only then let the uploader batch
+The gateway gets this order right: fsync to SQLite, ACK the feed, and only then let the uploader batch
 from disk. Reverse those two and the batching is what destroys the data.
 
 # Transport vs payload
@@ -310,9 +310,9 @@ These are separate choices and it's easy to conflate them.
 
 | hop | transport | payload |
 | --- | --- | --- |
-| sensor -> gateway | HTTP/1.1 | JSON |
-| gateway -> cloud | HTTP/2 over mutually authenticated TLS in Compose | protobuf |
-| inside Kafka | Kafka binary/TCP | shared `TelemetryEnvelope` JSON |
+| feed -> gateway | HTTP/1.1 | JSON |
+| gateway -> ingestion | HTTP/2 over mutually authenticated TLS in Compose | protobuf |
+| inside Kafka | Kafka binary/TCP | shared `TransactionEvent` JSON |
 
 Kafka is a binary protocol currently carrying JSON TEXT in the message value.
 Swapping that payload for protobuf doesn't change the transport at all.
@@ -321,7 +321,7 @@ The reason to swap it isn't parsing speed, it's schema enforcement.
 `System.Text.Json` silently leaves unmatched properties at their defaults.
 I already hit this: the API wrote `MessageId` into the JSON, the worker's DTO didn't have the field, and it became null forever. No exception, no log.
 
-The current contract lives in `Industrial.Shared`, which both producer and consumers reference, so
+The current contract lives in `TxMonitoring.Shared`, which both producer and consumers reference, so
 a property rename is a compile error inside this repository. The gRPC hop already works the same
-way: `telemetry.proto` is its shared schema.
+way: `transactions.proto` is its shared schema.
 Schema Registry is the full fix, but it's another container to operate. Add it when there are producers I don't own.

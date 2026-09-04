@@ -18,7 +18,7 @@ NoSQL is faster than JSONB, you're recreating NoSQL basically
 NoSQL is handy for polymorphic data, where you have 5000 different sensors that vary in some small way.
 Postgres would handle those 5000 sensors like this typically.
 
-| Id (UUID) | EquipmentId (String) | Timestamp (DateTime) | Payload (JSONB)                            |
+| Id (UUID) | AccountId (String) | Timestamp (DateTime) | Payload (JSONB)                            |
 | :-------- | :------------------- | :------------------- | :----------------------------------------- |
 | 1         | Tractor_A            | 10:00:01             | `{"RPM": 2000, "Fuel": 80}`                |
 | 2         | Moisture_01          | 10:00:02             | `{"Humidity": 14.5}`                       |
@@ -93,9 +93,9 @@ prioritizing ingestion speed over immediate disk-sync guarantees.
 
 For industrial/agtech, data integrity and durability are more important than write throughput.
 
-- Referential Integrity: SQL guarantees every TelemetryReading is linked to a valid EquipmentId.
+- Referential Integrity: SQL guarantees every MonitoredTransaction is linked to a valid AccountId.
 
-NoSQL allows "orphan" data -> saves millions of readings for EquipmentId: "Garbage-123".
+NoSQL allows "orphan" data -> saves millions of transactions for AccountId: "Garbage-123".
 
 In industrial settings, missing data is a liability.
 If a tractor engine blows up you could lose the last 50ms of pings because they were only in RAM.

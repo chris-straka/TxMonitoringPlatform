@@ -1,0 +1,8 @@
+@WorkerHostAddr = http://localhost:5265
+
+### Liveness.
+GET {{WorkerHostAddr}}/health
+
+### Readiness: Kafka topics/assignment, Postgres reachability, and EF schema currency.
+### Unready until pending migrations are applied (see chart/templates/migration-job.yaml).
+GET {{WorkerHostAddr}}/health/ready

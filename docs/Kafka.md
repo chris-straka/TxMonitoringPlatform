@@ -2,7 +2,7 @@
 
 Kafka prevents us from dropping events when an API is overloaded (API -> Kafka -> Worker -> DB).
 
-Without Kafka, the DB could be overwhelmed with incoming sensor data.
+Without Kafka, the DB could be overwhelmed with incoming transaction data.
 Scaling workers only scales compute, which causes you to hit the DB bottleneck sooner (~5000 writes/second).
 If DB is overwhelmed, the worker slows down, API waits longer for worker, API runs out of threads, events get dropped.
 If you add Kafka, the API no longer waits for the worker but for Kafka to respond back quickly.
@@ -61,8 +61,8 @@ By default, Kafka only orders msgs within a single partition, not across partiti
 If you don't specify a key for the msg, kafka will do round robin with msgs across partitions.
 If you specify a msg key, then it will put all the msgs with the same key in the same partition.
 
-tractorID = 1 -> partition 1
-tractorID = 2 -> partition 2
+accountId = ACCT-0001 -> partition 1
+accountId = ACCT-0002 -> partition 2
 
 # Producer Acknowledgments
 
@@ -112,10 +112,10 @@ links nothing across the two, so a message re-sent after a restart is not dedupl
 here. That is the job of the unique index on `MessageId` in Postgres, which also covers
 Kafka redelivering the same message to a consumer.
 
-**Why it is load-bearing here.** `TelemetryService` launches all 200 `ProduceAsync` calls
+**Why it is load-bearing here.** `TransactionIngestion` launches all 200 `ProduceAsync` calls
 before awaiting any of them, so several requests really are in flight -- exactly the
-condition where a retry can reorder a partition. Ordering per machine is the entire reason
-readings are keyed by `EquipmentId`.
+condition where a retry can reorder a partition. Ordering per account is the entire reason
+transactions are keyed by `AccountId`.
 
 # Consumer Rebalancing
 
@@ -141,7 +141,7 @@ var admin = new AdminClientBuilder(
 
 await admin.CreateTopicsAsync(new[] {
     new TopicSpecification {
-        Name = "tractor-state",
+        Name = "transaction-events",
         NumPartitions = 6,
         ReplicationFactor = 3,
         Configs = new Dictionary<string,string> {
@@ -210,8 +210,8 @@ visible rather than silent.
 
 The two durable poison boundaries use different forensic stores. If ingestion deterministically
 rejects an edge row, the gateway atomically copies it to bounded SQLite quarantine before removing
-it from the live queue. If Diagnostics receives malformed Kafka JSON or a tombstone, it publishes
-the source identity, bounded payload, and reason to `telemetry-events-dlq` before committing the
+it from the live queue. If detection receives malformed Kafka JSON or a tombstone, it publishes
+the source identity, bounded payload, and reason to `transaction-events-dlq` before committing the
 source offset. A failed or ambiguous DLQ acknowledgement rewinds the source record instead.
 
 The gateway's version is milder than a classic poison message. The cloud names the ids it

@@ -1,8 +1,8 @@
 # Atomics, cache lines, and the shared drop counter
 
-Context: `AcquisitionWorker._dropped` in the emulator. One `long`, incremented by every
-device task, read by a sampled log line. Small enough to explain completely, which makes
-it a good place to hang everything below.
+Context: the feed's drop accounting (`feed.transaction.dropped`). Picture one `long`,
+incremented by every account task, read by a sampled log line. Small enough to explain
+completely, which makes it a good place to hang everything below.
 
 ## `Interlocked` is not a lock
 
@@ -125,7 +125,7 @@ The handshake when core B wants to write a line it currently holds Shared:
 
 Every step is coherence traffic that did not exist when only one core touched the line.
 
-So when device tasks on different cores increment `_dropped`:
+So when account tasks on different cores increment that counter:
 
 1. Core A takes the line Modified, increments.
 2. Core B wants to increment. It must invalidate A's copy and pull the line over.
@@ -196,9 +196,9 @@ same saturation divided N ways, which tells you nothing extra.
 **Rejected: one padded counter per device, summed on read.** This is the right shape when
 the counter is genuinely hot: each task increments a line nobody else touches, and the
 totals are added up only when something reads them — a log line or a metric scrape. Cost
-moves from the constant path to the rare one. Not done because at `DeviceCount=4` and
-2 readings/sec the contention is unmeasurable, and it would trade a two-line drop handler
-for a padded array plus a summing read. Revisit at ~1000 devices on a saturated channel,
+moves from the constant path to the rare one. Not done because at `AccountCount=4` and
+under 1 transaction/sec the contention is unmeasurable, and it would trade a two-line drop handler
+for a padded array plus a summing read. Revisit at ~1000 accounts on a saturated channel,
 which is the only regime where the ping-pong is real.
 
 **Kept: `long`, not anything wider.** (*Widening* means using a larger integer type for
@@ -211,6 +211,6 @@ atomic on 32-bit platforms, which a plain `long++` would not be.
 
 ## See also
 
-- `sensor.telemetry.dropped` in `Infrastructure/SensorMetrics.cs` — the graphable version
-  of this counter, and the only place sensor-side loss is ever visible.
+- `feed.transaction.dropped` in `Infrastructure/FeedMetrics.cs` — the graphable version
+  of this counter, and the only place feed-side loss is ever visible.
 - `docs/Observability.md` for the OTel side.

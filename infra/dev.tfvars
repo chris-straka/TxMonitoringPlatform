@@ -1,15 +1,15 @@
 env                    = "Development"
-github_repo_url        = "https://github.com/YOUR_ORG/IndustrialPlatform.git"
+github_repo_url        = "https://github.com/YOUR_ORG/TxMonitoringPlatform.git"
 github_target_revision = "main"
-application_namespace  = "industrial-platform-dev"
+application_namespace  = "tx-monitoring-dev"
 
 application_images = {
-  edge_gateway       = "ghcr.io/YOUR_ORG/industrial-platform/edge-gateway:dev"
-  ingestion_api      = "ghcr.io/YOUR_ORG/industrial-platform/ingestion-api:dev"
-  diagnostics_worker = "ghcr.io/YOUR_ORG/industrial-platform/diagnostics-worker:dev"
-  sensor_emulator    = "ghcr.io/YOUR_ORG/industrial-platform/sensor-emulator:dev"
-  web_api            = "ghcr.io/YOUR_ORG/industrial-platform/web-api:dev"
-  web_dashboard      = "ghcr.io/YOUR_ORG/industrial-platform/web-dashboard:dev"
+  capture_gateway  = "ghcr.io/YOUR_ORG/tx-monitoring/capture-gateway:dev"
+  ingestion_api    = "ghcr.io/YOUR_ORG/tx-monitoring/ingestion-api:dev"
+  detection_worker = "ghcr.io/YOUR_ORG/tx-monitoring/detection-worker:dev"
+  feed_emulator    = "ghcr.io/YOUR_ORG/tx-monitoring/feed-emulator:dev"
+  web_api          = "ghcr.io/YOUR_ORG/tx-monitoring/web-api:dev"
+  web_dashboard    = "ghcr.io/YOUR_ORG/tx-monitoring/web-dashboard:dev"
 }
 
 # The first endpoint is the TLS administrative listener reachable from Terraform. Platform pods
@@ -27,7 +27,6 @@ external_secret = {
   enabled                               = false
   secret_store_name                     = ""
   secret_store_kind                     = "ClusterSecretStore"
-  gemini_api_key_remote_key             = ""
   postgres_connection_string_remote_key = ""
   postgres_password_remote_key          = ""
 }

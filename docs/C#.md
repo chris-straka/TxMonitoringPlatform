@@ -87,7 +87,7 @@ Ownership decides who disposes. If your class created the disposable, your class
 it. If it was injected, the creator still owns it, so leave it alone.
 
 ```cs
-public sealed class SensorMetrics : IDisposable
+public sealed class FeedMetrics : IDisposable
 {
     public void Dispose() => _meter.Dispose();
 }

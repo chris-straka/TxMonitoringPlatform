@@ -12,7 +12,7 @@ service_healthy: Docker started the container and the cmd defined in the healthc
 
 # Replica identity
 
-`docker compose up --scale sensor-emulator=3` creates 3 CONTAINERS from 1 SERVICE
+`docker compose up --scale feed-emulator=3` creates 3 CONTAINERS from 1 SERVICE
 definition. (`deploy.replicas` in the compose file does the same thing declaratively; that
 key originated with Swarm and `docker stack deploy`, and Compose v2 also honours it.)
 
@@ -23,10 +23,10 @@ That is a feature, not an oversight. Identical replicas are interchangeable, whi
 makes a stateless service trivial to load balance and scale. Identity is only wanted when
 the workload is PARTITIONED -- when each replica owns a distinct shard of something.
 
-The emulator is partitioned: replica 0 must own EQ-0..EQ-3 and nothing else, replica 1
-EQ-4..EQ-7, and so on. If two containers both claim to be EQ-0, independent sequences are
-interleaved under one equipment identity: the audit infers misleading restart boundaries and the
-stateful detector learns from two simulated machines as though they were one. Random MessageIds
+The emulator is partitioned: replica 0 must own ACCT-0..ACCT-3 and nothing else, replica 1
+ACCT-4..ACCT-7, and so on. If two containers both claim to be ACCT-0, independent sequences are
+interleaved under one account identity: the audit infers misleading restart boundaries and the
+stateful detector learns from two simulated accounts as though they were one. Random MessageIds
 still differ, so the unique-ID check cannot diagnose that identity collision.
 
 ## How each orchestrator answers this
@@ -43,8 +43,8 @@ Swarm template syntax, which is the answer if you are on Swarm rather than k8s:
 
 ```yaml
 services:
-  sensor-emulator:
-    image: sensor-emulator
+  feed-emulator:
+    image: feed-emulator
     deploy:
       replicas: 3
     environment:
@@ -61,9 +61,9 @@ is not true.
 
 ## Which number the app takes
 
-`Emulator__ReplicaId`, 0-based to match a Kubernetes StatefulSet ordinal, since k8s is the
-intended prod target. Device tags are 0-based too (`EQ-0`..), so the worker is
-`Range(ReplicaId * DeviceCount, DeviceCount)` with no off-by-one anywhere.
+`Generator__ReplicaId`, 0-based to match a Kubernetes StatefulSet ordinal, since k8s is the
+chart target. Account tags are 0-based too (`ACCT-0000`..), so the worker owns
+`Range(ReplicaId * AccountCount, AccountCount)` with no off-by-one anywhere.
 
 Swarm slots are 1-based and would need `SLOT - 1` in an entrypoint. Not a concern here --
 this repo is compose for dev and k8s for prod, so Swarm gets no say in the config shape.
@@ -89,8 +89,8 @@ A profile is just a label meaning "skip this service unless the profile is reque
 is NOT an identity mechanism -- the identity comes from writing three separate service
 definitions by hand. Manual, and honest about being manual.
 
-Rejected here: `docker compose --scale sensor-emulator=3`. It is one word shorter and it
-is wrong -- all three containers inherit byte-identical env, all three own EQ-0..EQ-3, and
+Rejected here: `docker compose --scale feed-emulator=3`. It is one word shorter and it
+is wrong -- all three containers inherit byte-identical env, all three own ACCT-0..ACCT-3, and
 the resulting duplicate MessageIds are indistinguishable from a real durability bug.
 
 # One process, many simulated devices

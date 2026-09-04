@@ -1,36 +1,36 @@
 # track: swe | csa | both. TODO-prefixed lines are not true yet.
 
 projects:
-  - id: telemetry
-    name: "Cloud Infrastructure & Distributed Systems"
+  - id: txmonitoring
+    name: "Transaction Monitoring & Distributed Systems"
     context: "Personal Project"
-    stack: ".NET 10, Kafka, Docker, ML.NET"
+    stack: ".NET 10, Kafka, Postgres, Redis, Docker, ML.NET"
     bullets:
       # working set
       - id: arch
         track: both
-        text: "Architected an event-driven telemetry platform using .NET 10, Apache Kafka, and Docker to ingest and process real-time sensor streams."
-      - id: ml-worker
+        text: "Architected an event-driven transaction risk-monitoring platform using .NET 10, Apache Kafka, Postgres, and Docker to observe a synthetic payment feed and publish explainable review alerts."
+      - id: detection-worker
         track: both
-        text: "Developed a background worker consuming Kafka events to run ML.NET anomaly detection and trigger automated AI diagnostics."
+        text: "Developed a detection worker consuming Kafka events to run per-account amount-spike checks and a deterministic risk policy, persisting each decision with reason codes and detector provenance."
       - id: signalr
         track: both
-        text: "Implemented a SignalR WebSocket bridge to stream live telemetry events directly to a React dashboard."
+        text: "Implemented a SignalR WebSocket bridge to stream live transaction events and risk alerts directly to a React dashboard."
       - id: terraform
         track: csa
-        text: "Drafted infrastructure specifications using Terraform (IaC) and defined GitOps deployment workflows via ArgoCD on Kubernetes (Helm, Istio)."
-      - id: ai-pipeline
+        text: "Drafted infrastructure specifications using Terraform (IaC) and defined GitOps deployment workflows via ArgoCD on Kubernetes (Helm, Istio), validated by plan-only CI checks."
+      - id: policy
         track: both
-        text: "Developed an AI pipeline combining ML.NET time-series anomaly detection with LLM diagnostics to automatically convert sensor failures into actionable corrective reports."
+        text: "Implemented a versioned risk policy returning integer scores, ordered reasons, and a content-derived configuration hash, with regression tests proving any effective rule change alters the hash."
       - id: observability
         track: both
-        text: "Configured OpenTelemetry metrics, logs, and traces with a checked-in Grafana dashboard and Prometheus alerts for loss, backlog, retries, dead letters, and alert-outbox health."
+        text: "Configured OpenTelemetry metrics, logs, and traces with a checked-in Grafana dashboard and Prometheus alerts for loss, backlog, retries, dead letters, velocity outages, and alert-outbox health."
       - id: store-forward
         track: swe
-        text: "Engineered an edge gateway with a durable SQLite WAL buffer (synchronous=FULL) to survive total cloud outages, shedding excess load via HTTP 429 backpressure to keep the buffer bounded."
+        text: "Engineered a capture gateway with a durable SQLite WAL buffer (synchronous=FULL) to survive total ingestion outages, shedding excess load via HTTP 429 backpressure to keep the buffer bounded."
       - id: idempotency
         track: swe
-        text: "Designed durable post-gateway custody with at-least-once gRPC and Kafka delivery for valid readings, minting UUIDv7 idempotency keys at the sensor origin and deduplicating replays in Postgres."
+        text: "Designed durable post-gateway custody with at-least-once gRPC and Kafka delivery for valid transactions, minting UUIDv7 idempotency keys at the feed origin and deduplicating replays in Postgres."
       - id: tracing
         track: swe
         text: "Implemented distributed W3C tracing, metrics, and logging across the pipeline using OpenTelemetry, aggregating into Prometheus, Tempo, and Loki for Grafana dashboards."
@@ -42,58 +42,61 @@ projects:
       # pool
       - id: settlement
         track: swe
-        text: "Eliminated data loss on ambiguous upload failures by deleting a buffered reading only after the cloud explicitly named its ID accepted or rejected, retrying everything left unnamed."
+        text: "Eliminated data loss on ambiguous upload failures by deleting a buffered transaction only after ingestion explicitly named its ID accepted or rejected, retrying everything left unnamed."
       - id: head-of-line
         track: swe
-        text: "Implemented per-reading rejection at ingestion, quarantining a single malformed record at the edge instead of letting it block the upload queue behind it."
+        text: "Implemented per-transaction rejection at ingestion, quarantining a single deterministic rejection at the gateway instead of letting it block the upload queue behind it."
       - id: quarantine
         track: swe
-        text: "Built a bounded SQLite quarantine table that preserves rejected readings with their original payload and reason code, written in the same transaction as the live-row delete so poison records stay auditable."
+        text: "Built a bounded SQLite quarantine table that preserves rejected transactions with their original payload and reason code, written in the same transaction as the live-row delete so poison rows stay auditable."
       - id: outbox
         track: swe
-        text: "Protected alert delivery with a transactional outbox, committing each detected anomaly and its alert in one Postgres transaction while dashboard consumers deduplicate publisher retries by message ID."
+        text: "Protected alert delivery with a transactional outbox, committing each review-recommended decision and its alert in one Postgres transaction while dashboard consumers deduplicate publisher retries by message ID."
       - id: dlq
         track: swe
         text: "Added a Kafka dead-letter path that durably copies malformed records with their source partition and offset before committing, keeping bad payloads inspectable without stalling the consumer."
       - id: decoupling
         track: swe
-        text: "Decoupled sensor acquisition from transmission behind a bounded channel so network latency cannot reduce the sample rate, instrumenting every intentionally dropped reading."
+        text: "Decoupled feed generation from transmission behind a bounded channel so network latency cannot reduce the generation rate, instrumenting every intentionally dropped transaction."
       - id: admission-concurrency
         track: swe
         text: "Made buffer admission an atomic reservation guarded by a mutation gate, so concurrent writers cannot exceed the depth ceiling or observe a half-applied state change."
       - id: event-time
         track: swe
-        text: "Modeled event time and processing time separately so readings flushed after a 30-minute outage retain their true occurrence time, with sequence numbers exposing dropped ranges."
+        text: "Modeled event time and processing time separately so transactions flushed after a 30-minute outage retain their true occurrence time, with sequence numbers exposing dropped ranges."
       - id: health
         track: both
-        text: "Added separate liveness and dependency-aware readiness probes across the gateway and cloud services, covering Kafka topics and partition assignment, current Postgres migrations, and SQLite writability."
+        text: "Added separate liveness and dependency-aware readiness probes across the gateway, ingestion, detection, and web services, covering Kafka topics and partition assignment, current Postgres migrations, and SQLite writability."
       - id: e2e-chaos
         track: swe
         text: "Wrote an isolated Docker failure-injection harness that stops ingestion, Postgres, and Kafka mid-run and asserts queue recovery, one row per accepted ID, consumer retry, DLQ publication, and outbox recovery."
       - id: mtls
         track: csa
-        text: "Secured the edge-to-ingestion gRPC hop in Docker Compose with mutual TLS, a private development CA, and a SHA-256 client-certificate allowlist that models independently revocable gateway identities."
-      - id: ml-provenance
+        text: "Secured the gateway-to-ingestion gRPC hop in Docker Compose with mutual TLS, a private development CA, and a SHA-256 client-certificate allowlist that models independently revocable gateway identities."
+      - id: detector-provenance
         track: swe
-        text: "Persisted detector score, p-value, artifact hash, and warm-up history count beside each telemetry decision so historical anomaly classifications retain their runtime provenance."
+        text: "Persisted raw detector score, p-value, history count, detector version, policy version, and policy hash beside each transaction decision so historical classifications retain their runtime provenance."
       - id: schema-evolution
         track: swe
-        text: "Enforced Protobuf schema-evolution discipline on the gRPC contract with frozen field numbers and reserved tags, backed by a regression test that fails CI on a renumbered field."
+        text: "Enforced Protobuf schema-evolution discipline on the gRPC contract with frozen field numbers, backed by descriptor regression tests that fail CI on a renumbered field."
       - id: input-validation
         track: swe
-        text: "Aligned edge admission bounds with cloud-side validation so unprocessable input is refused at the device boundary, including malformed trace context caught before it reaches a Kafka header."
+        text: "Aligned gateway admission bounds with ingestion-side validation so unprocessable input is refused at the boundary, including malformed trace context caught before it reaches a Kafka header."
       - id: db-schema
         track: swe
-        text: "Designed the Postgres schema with a unique idempotency index, a composite index for pending-outbox scans, and persisted detector provenance for historical anomaly decisions."
+        text: "Designed the Postgres schema with a unique idempotency index, per-account warm-up and velocity indexes, a pending-outbox scan index, and check constraints on amount, currency, and score ranges."
       - id: kafka-keying
         track: both
-        text: "Keyed Kafka events by EquipmentId so each machine's readings stay ordered on one partition, enabling per-equipment detector state while consumption scales across machines."
+        text: "Keyed transaction events by AccountId so each account's transactions stay ordered on one partition, enabling per-account detector state while consumption scales across accounts."
+      - id: redis-cache
+        track: swe
+        text: "Built Redis velocity windows as derived cache only, with atomic Lua observation, lazy Postgres rebuilds, and Unavailable-status degradation so a cache outage never blocks consumption or persistence."
       - id: config
         track: csa
         text: "Bound every service's runtime configuration to validated typed options with fail-fast startup checks, so a missing deployment value stops the container instead of silently defaulting."
       - id: ci
         track: both
-        text: "Set up GitHub Actions CI running a warnings-as-errors build, EF Core migration-drift detection, tests with coverage, frontend lint and build, Compose validation, and Helm chart lint and render."
+        text: "Set up GitHub Actions CI running a warnings-as-errors build, format verification, EF Core migration-drift detection, tests with coverage, frontend lint and build, Compose validation, and Helm chart lint and render."
       - id: reliability-boundary
         track: both
         text: "Defined an explicit reliability boundary—best-effort before the gateway's 202 Accepted and durable custody after it, with permanent rejections quarantined and metered—backed by regression tests, an isolated failure harness, chaos targets, and an automated audit."
@@ -102,13 +105,13 @@ projects:
       # sharper variants of working-set lines
       - id: arch-alt
         track: both
-        text: "Architected a multi-service event-driven telemetry platform using .NET 10, Apache Kafka, and Postgres, with a Docker Compose runtime and provisioned metrics, logs, and traces."
+        text: "Architected a multi-service event-driven monitoring platform using .NET 10, Apache Kafka, and Postgres, with a Docker Compose runtime and provisioned metrics, logs, and traces."
       - id: store-forward-alt
         track: swe
-        text: "Engineered an edge gateway buffering 500K readings in SQLite (WAL, synchronous=FULL) to survive total cloud outages, shedding overflow via HTTP 429 and Retry-After backpressure."
+        text: "Engineered a capture gateway buffering 500K transactions in SQLite (WAL, synchronous=FULL) to survive total ingestion outages, shedding overflow via HTTP 429 and Retry-After backpressure."
       - id: tracing-alt
         track: swe
-        text: "Preserved W3C distributed tracing across a durable buffered hop by persisting trace context in SQLite and replaying it as span links, keeping a reading's trace intact through multi-hour outages."
+        text: "Preserved W3C distributed tracing across a durable buffered hop by persisting trace context in SQLite and replaying it as span links, keeping a transaction's trace intact through multi-hour outages."
       - id: api-relay-alt
         track: swe
         text: "Developed an ASP.NET Web API relaying Kafka events via a SignalR WebSocket bridge, giving each replica its own consumer group so every client receives the full live stream."
@@ -123,27 +126,16 @@ projects:
         text: "TODO: Deployed microservices using Helm, ArgoCD (GitOps), and Istio service mesh, with full observability configured via OpenTelemetry, Prometheus, and Grafana."
       - id: arch-k8s
         track: both
-        text: "TODO: Architected an event-driven telemetry platform using .NET 10, Apache Kafka, and Kubernetes to ingest and process real-time sensor streams."
+        text: "TODO: Operate the monitoring platform on Kubernetes via the checked-in Helm chart and Terraform stack, exercised beyond lint/render/plan against a real cluster."
       - id: terraform-implemented
         track: csa
-        text: "TODO: Drafted infrastructure specifications using Terraform (IaC) and implemented GitOps deployment workflows via ArgoCD on Kubernetes (Helm, Istio)."
+        text: "TODO: Applied the Terraform stack to a real cluster and implemented GitOps deployment workflows via ArgoCD on Kubernetes (Helm, Istio)."
       - id: api-relay-subsecond
         track: swe
         text: "TODO: Developed an ASP.NET Web API relaying Kafka events via a SignalR WebSocket bridge, pushing sub-second updates to a React/Vite frontend."
       - id: production-security
         track: csa
-        text: "TODO: Extended workload identity and encrypted transport to sensors, Kafka, Postgres, and observability, backed by production certificate enrollment, rotation, and revocation."
+        text: "TODO: Extended workload identity and encrypted transport to the feed, Kafka, Postgres, Redis, and observability, backed by production certificate enrollment, rotation, and revocation."
       - id: perf
         track: both
-        text: "TODO: Sustained N readings/sec end to end at Xms p95 Kafka-to-dashboard latency (fill in real measured numbers)."
-
-      # TODO: MLOps
-      - id: ml-dataset
-        track: swe
-        text: "TODO: Generated a labeled telemetry dataset covering gradual degradation and sensor drift, snapshotted and versioned from Postgres for reproducible training runs."
-      - id: ml-training
-        track: both
-        text: "TODO: Trained and evaluated a supervised anomaly model on labeled equipment telemetry, reporting precision and recall against a held-out set rather than a fixed-threshold detector."
-      - id: mlops-pipeline
-        track: both
-        text: "TODO: Built an MLOps pipeline versioning datasets and model artifacts, shadow-testing each candidate against the live detector before promotion, with drift monitoring and automated rollback."
+        text: "TODO: Sustained N transactions/sec end to end at Xms p95 Kafka-to-dashboard latency (fill in real measured numbers)."

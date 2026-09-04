@@ -28,7 +28,7 @@
         "type": "prometheus",
         "uid": "prometheus_ds"
       },
-      "description": "1 means every reporting edge instance reached ingestion on its latest upload attempt; 0 means at least one did not.",
+      "description": "1 means the capture gateway reached ingestion on its latest upload attempt; 0 means it did not.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -107,7 +107,7 @@
         "type": "prometheus",
         "uid": "prometheus_ds"
       },
-      "description": "Total readings held durably across all reporting edge gateway instances.",
+      "description": "Total transactions held durably by the capture gateway.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -174,7 +174,7 @@
         "type": "prometheus",
         "uid": "prometheus_ds"
       },
-      "description": "Age of the oldest unacknowledged edge reading. This is the edge delivery SLO signal.",
+      "description": "Age of the oldest unacknowledged capture transaction. This is the gateway delivery SLO signal.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -402,7 +402,7 @@
         "type": "prometheus",
         "uid": "prometheus_ds"
       },
-      "description": "Every line here represents permanent loss or rejected input. Cloud rejections are copied into the bounded edge quarantine before deletion from the live queue.",
+      "description": "Every line here represents permanent loss or rejected input. Ingestion rejections are copied into the bounded capture quarantine before deletion from the live queue.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -583,7 +583,7 @@
         "type": "prometheus",
         "uid": "prometheus_ds"
       },
-      "description": "Batch upload failures are classified by the outcome label. Accepted and permanently rejected counts are per reading.",
+      "description": "Batch upload failures are classified by the outcome label. Accepted and permanently rejected counts are per transaction.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -910,7 +910,7 @@
         "type": "prometheus",
         "uid": "prometheus_ds"
       },
-      "description": "Sensor OccurredAt to successful Postgres commit, including edge buffering and Kafka processing time.",
+      "description": "Feed OccurredAt to successful Postgres commit, including capture buffering and Kafka processing time.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -990,7 +990,7 @@
         "type": "prometheus",
         "uid": "prometheus_ds"
       },
-      "description": "Model detections, optional Gemini enrichment failures, and dashboard relay failures.",
+      "description": "Policy rule firings, review recommendations, velocity outages, and dashboard relay failures.",
       "fieldConfig": {
         "defaults": {
           "color": {

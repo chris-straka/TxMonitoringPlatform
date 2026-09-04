@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 BASE_COMPOSE="$REPO_ROOT/docker-compose.yaml"
 E2E_COMPOSE="$REPO_ROOT/tests/e2e/docker-compose.e2e.yaml"
-E2E_PROJECT_NAME="${E2E_PROJECT_NAME:-industrialplatform-e2e-$(date +%s)-$$}"
+E2E_PROJECT_NAME="${E2E_PROJECT_NAME:-txmonitoring-e2e-$(date +%s)-$$}"
 STARTUP_TIMEOUT="${E2E_STARTUP_TIMEOUT_SECONDS:-180}"
 
 case "$E2E_PROJECT_NAME" in
@@ -87,7 +87,7 @@ cleanup() {
         compose ps -a >&2
         printf '\n--- bounded E2E logs ---\n' >&2
         compose logs --no-color --tail=200 \
-            dev-pki-init edge-gateway ingestion-api diagnostics-worker postgres kafka >&2
+            dev-pki-init capture-gateway ingestion-api detection-worker postgres kafka >&2
     fi
 
     printf '\n==> Removing isolated Compose project %s\n' "$E2E_PROJECT_NAME"
@@ -142,14 +142,14 @@ kafka_init_succeeded() {
     [ "$(docker inspect --format '{{.State.ExitCode}}' "$container_id" 2>/dev/null)" = '0' ]
 }
 
-wait_for_http_from_edge() {
+wait_for_http_from_capture() {
     description=$1
     url=$2
     timeout=$3
     deadline=$((SECONDS + timeout))
 
     while [ "$SECONDS" -lt "$deadline" ]; do
-        if compose exec -T edge-gateway curl --fail --silent --show-error \
+        if compose exec -T capture-gateway curl --fail --silent --show-error \
             --max-time 5 "$url" >/dev/null 2>&1; then
             return 0
         fi
@@ -175,32 +175,32 @@ wait_until() {
     fail "$description did not become true within ${timeout}s"
 }
 
-edge_queue_depth() {
+capture_queue_depth() {
     response="$(
-        compose exec -T edge-gateway \
+        compose exec -T capture-gateway \
             curl --fail --silent --show-error --max-time 5 http://localhost:8080/buffer \
             2>/dev/null || true
     )"
     printf '%s' "$response" | sed -n 's/.*"queueDepth":\([0-9][0-9]*\).*/\1/p'
 }
 
-edge_queue_is() {
+capture_queue_is() {
     expected=$1
-    [ "$(edge_queue_depth)" = "$expected" ]
+    [ "$(capture_queue_depth)" = "$expected" ]
 }
 
-post_edge_reading() {
+post_capture_transaction() {
     message_id=$1
     sequence_number=$2
     occurred_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-    payload="{\"messageId\":\"$message_id\",\"equipmentId\":\"E2E-GATEWAY\",\"sequenceNumber\":$sequence_number,\"occurredAt\":\"$occurred_at\",\"engineTemperature\":80.0,\"oilPressure\":40.0}"
+    payload="{\"messageId\":\"$message_id\",\"accountId\":\"E2E-ACCT\",\"sequenceNumber\":$sequence_number,\"occurredAt\":\"$occurred_at\",\"amountMinor\":8000,\"currency\":\"CAD\"}"
 
     status="$(
-        compose exec -T edge-gateway curl --silent --show-error \
+        compose exec -T capture-gateway curl --silent --show-error \
             --output /dev/null --write-out '%{http_code}' --max-time 10 \
             --header 'Content-Type: application/json' \
             --data "$payload" \
-            http://localhost:8080/api/local/telemetry
+            http://localhost:8080/api/local/transactions
     )"
 
     if [ "$status" != '202' ]; then
@@ -213,7 +213,7 @@ query_db() {
     sql=$1
     compose exec -T postgres \
         psql --no-psqlrc --set ON_ERROR_STOP=1 --tuples-only --no-align \
-        --username admin --dbname industrial_db --command "$sql" \
+        --username admin --dbname tx_monitoring --command "$sql" \
         | tr -d '[:space:]'
 }
 
@@ -222,16 +222,16 @@ database_has_unique_ids() {
     id_list=$2
     result="$(
         query_db \
-            "SELECT COUNT(*) || '|' || COUNT(DISTINCT \"MessageId\") FROM \"TelemetryReadings\" WHERE \"MessageId\" IN ($id_list);" \
+            "SELECT COUNT(*) || '|' || COUNT(DISTINCT \"MessageId\") FROM \"Transactions\" WHERE \"MessageId\" IN ($id_list);" \
             2>/dev/null || true
     )"
     [ "$result" = "$expected_count|$expected_count" ]
 }
 
-diagnostics_logged_retry_since() {
+detection_logged_retry_since() {
     since=$1
     output="$(
-        compose logs --no-color --since "$since" diagnostics-worker 2>&1 || true
+        compose logs --no-color --since "$since" detection-worker 2>&1 || true
     )"
     case "$output" in
         *'it was rewound for retry.'*) return 0 ;;
@@ -267,7 +267,7 @@ printf 'Compose project: %s\n' "$E2E_PROJECT_NAME"
 
 if [ "${E2E_SKIP_BUILD:-0}" != '1' ]; then
     log 'Building E2E application images'
-    compose build ingestion-api edge-gateway diagnostics-worker
+    compose build ingestion-api capture-gateway detection-worker
 else
     log 'Reusing existing E2E application images'
 fi
@@ -279,18 +279,18 @@ wait_for_container_health kafka "$STARTUP_TIMEOUT"
 # kafka-init has no healthcheck; its successful one-shot state is exited with status zero.
 wait_until 'Kafka topic initialization' "$STARTUP_TIMEOUT" kafka_init_succeeded
 
-log 'Starting ingestion, edge, and diagnostics'
-compose up --detach ingestion-api edge-gateway diagnostics-worker
-wait_for_container_health edge-gateway "$STARTUP_TIMEOUT"
-wait_for_http_from_edge 'edge liveness' \
+log 'Starting ingestion, capture, and detection'
+compose up --detach ingestion-api capture-gateway detection-worker
+wait_for_container_health capture-gateway "$STARTUP_TIMEOUT"
+wait_for_http_from_capture 'capture liveness' \
     http://localhost:8080/health "$STARTUP_TIMEOUT"
-wait_for_http_from_edge 'ingestion readiness' \
+wait_for_http_from_capture 'ingestion readiness' \
     http://ingestion-api:8080/health/ready "$STARTUP_TIMEOUT"
-wait_for_http_from_edge 'diagnostics readiness' \
-    http://diagnostics-worker:8080/health/ready "$STARTUP_TIMEOUT"
+wait_for_http_from_capture 'detection readiness' \
+    http://detection-worker:8080/health/ready "$STARTUP_TIMEOUT"
 
 log 'Checking that ingestion rejects a TLS client without a gateway certificate'
-if compose exec -T edge-gateway curl --silent --show-error \
+if compose exec -T capture-gateway curl --silent --show-error \
     --output /dev/null --max-time 10 \
     --cacert /tls/ca.crt \
     https://ingestion-api:8081/ >/dev/null 2>&1; then
@@ -304,54 +304,54 @@ MESSAGE_ID_4='44444444-4444-4444-8444-444444444444'
 OUTBOX_MESSAGE_ID='55555555-5555-4555-8555-555555555555'
 READING_IDS_SQL="'$MESSAGE_ID_1'::uuid,'$MESSAGE_ID_2'::uuid,'$MESSAGE_ID_3'::uuid"
 
-log 'Stopping ingestion and filling the durable edge queue'
+log 'Stopping ingestion and filling the durable capture queue'
 compose stop --timeout 10 ingestion-api
-post_edge_reading "$MESSAGE_ID_1" 1
-post_edge_reading "$MESSAGE_ID_2" 2
-post_edge_reading "$MESSAGE_ID_3" 3
-wait_until 'edge queue depth to reach three' 15 edge_queue_is 3
+post_capture_transaction "$MESSAGE_ID_1" 1
+post_capture_transaction "$MESSAGE_ID_2" 2
+post_capture_transaction "$MESSAGE_ID_3" 3
+wait_until 'capture queue depth to reach three' 15 capture_queue_is 3
 
-log 'Restarting the edge during the outage and checking SQLite recovery'
-compose restart --timeout 10 edge-gateway
-wait_for_container_health edge-gateway "$STARTUP_TIMEOUT"
-wait_until 'three queued rows to survive the edge restart' 15 edge_queue_is 3
+log 'Restarting capture during the outage and checking SQLite recovery'
+compose restart --timeout 10 capture-gateway
+wait_for_container_health capture-gateway "$STARTUP_TIMEOUT"
+wait_until 'three queued rows to survive the capture restart' 15 capture_queue_is 3
 
 log 'Restoring ingestion and checking queue drain plus Postgres idempotency'
 compose start ingestion-api
-wait_for_http_from_edge 'ingestion readiness after restart' \
+wait_for_http_from_capture 'ingestion readiness after restart' \
     http://ingestion-api:8080/health/ready "$STARTUP_TIMEOUT"
-wait_until 'edge queue to drain' 60 edge_queue_is 0
-wait_until 'three unique telemetry rows in Postgres' 60 \
+wait_until 'capture queue to drain' 60 capture_queue_is 0
+wait_until 'three unique transaction rows in Postgres' 60 \
     database_has_unique_ids 3 "$READING_IDS_SQL"
 
-log 'Stopping Postgres and proving Diagnostics rewinds the consumed record'
+log 'Stopping Postgres and proving detection rewinds the consumed record'
 POSTGRES_OUTAGE_STARTED="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
 compose stop --timeout 10 postgres
-post_edge_reading "$MESSAGE_ID_4" 4
-wait_until 'gateway delivery to Kafka during the Postgres outage' 45 edge_queue_is 0
-wait_until 'Diagnostics retry log during the Postgres outage' 45 \
-    diagnostics_logged_retry_since "$POSTGRES_OUTAGE_STARTED"
+post_capture_transaction "$MESSAGE_ID_4" 4
+wait_until 'gateway delivery to Kafka during the Postgres outage' 45 capture_queue_is 0
+wait_until 'detection retry log during the Postgres outage' 45 \
+    detection_logged_retry_since "$POSTGRES_OUTAGE_STARTED"
 
 log 'Restoring Postgres and checking the rewound record is persisted once'
 compose start postgres
 wait_for_container_health postgres "$STARTUP_TIMEOUT"
-wait_until 'rewound telemetry row to persist exactly once' 60 \
+wait_until 'rewound transaction row to persist exactly once' 60 \
     database_has_unique_ids 1 "'$MESSAGE_ID_4'::uuid"
-wait_for_http_from_edge 'diagnostics readiness after Postgres recovery' \
-    http://diagnostics-worker:8080/health/ready "$STARTUP_TIMEOUT"
+wait_for_http_from_capture 'detection readiness after Postgres recovery' \
+    http://detection-worker:8080/health/ready "$STARTUP_TIMEOUT"
 
 log 'Publishing malformed Kafka JSON and checking the durable DLQ copy'
 MALFORMED_TOKEN="e2e-malformed-$E2E_PROJECT_NAME"
 MALFORMED_PAYLOAD="{\"token\":\"$MALFORMED_TOKEN\""
 compose exec -T kafka \
     /opt/kafka/bin/kafka-console-producer.sh \
-    --bootstrap-server kafka:9092 --topic telemetry-events <<< "$MALFORMED_PAYLOAD"
+    --bootstrap-server kafka:9092 --topic transaction-events <<< "$MALFORMED_PAYLOAD"
 
 if ! DLQ_RECORD="$(
     compose exec -T kafka \
         /opt/kafka/bin/kafka-console-consumer.sh \
         --bootstrap-server kafka:9092 \
-        --topic telemetry-events-dlq \
+        --topic transaction-events-dlq \
         --from-beginning --max-messages 1 --timeout-ms 45000 \
         2>/dev/null
 )"; then
@@ -359,11 +359,11 @@ if ! DLQ_RECORD="$(
 fi
 
 case "$DLQ_RECORD" in
-    *'"sourceTopic":"telemetry-events"'* ) ;;
-    * ) fail 'DLQ record did not identify telemetry-events as its source' ;;
+    *'"sourceTopic":"transaction-events"'* ) ;;
+    * ) fail 'DLQ record did not identify transaction-events as its source' ;;
 esac
 case "$DLQ_RECORD" in
-    *'"failureReason":"payload is not valid telemetry JSON"'* ) ;;
+    *'"failureReason":"payload is not valid transaction JSON"'* ) ;;
     * ) fail 'DLQ record did not retain the poison-message reason' ;;
 esac
 case "$DLQ_RECORD" in
@@ -373,9 +373,9 @@ esac
 
 log 'Stopping Kafka and checking the alert outbox survives until broker recovery'
 compose stop --timeout 15 kafka
-OUTBOX_PAYLOAD="{\"messageId\":\"$OUTBOX_MESSAGE_ID\",\"equipmentId\":\"E2E-OUTBOX\",\"occurredAt\":\"$(date -u +'%Y-%m-%dT%H:%M:%SZ')\",\"engineTemperature\":80.0,\"diagnostics\":\"e2e recovery\"}"
+OUTBOX_PAYLOAD="{\"messageId\":\"$OUTBOX_MESSAGE_ID\",\"accountId\":\"E2E-ACCT\",\"occurredAt\":\"$(date -u +'%Y-%m-%dT%H:%M:%SZ')\",\"amountMinor\":8000,\"currency\":\"CAD\",\"note\":\"e2e recovery\"}"
 query_db \
-    "INSERT INTO \"AlertOutboxMessages\" (\"Id\", \"MessageId\", \"EquipmentId\", \"Payload\", \"TraceParent\", \"CreatedAt\", \"PublishedAt\", \"AttemptCount\", \"LastError\") VALUES ('66666666-6666-4666-8666-666666666666'::uuid, '$OUTBOX_MESSAGE_ID'::uuid, 'E2E-OUTBOX', '$OUTBOX_PAYLOAD', NULL, NOW(), NULL, 0, NULL);" \
+    "INSERT INTO \"AlertOutboxMessages\" (\"Id\", \"MessageId\", \"AccountId\", \"Payload\", \"TraceParent\", \"CreatedAt\", \"PublishedAt\", \"AttemptCount\", \"LastError\") VALUES ('66666666-6666-4666-8666-666666666666'::uuid, '$OUTBOX_MESSAGE_ID'::uuid, 'E2E-ACCT', '$OUTBOX_PAYLOAD', NULL, NOW(), NULL, 0, NULL);" \
     >/dev/null
 wait_until 'outbox publish attempt while Kafka is unavailable' 60 \
     outbox_attempted "$OUTBOX_MESSAGE_ID"
@@ -387,4 +387,4 @@ wait_until 'outbox row to publish after Kafka recovery' 90 \
     outbox_is_published "$OUTBOX_MESSAGE_ID"
 
 log 'All failure/recovery assertions passed'
-printf 'Verified 4 telemetry MessageIds, one DLQ record, and one recovered outbox publish.\n'
+printf 'Verified 4 transaction MessageIds, one DLQ record, and one recovered outbox publish.\n'

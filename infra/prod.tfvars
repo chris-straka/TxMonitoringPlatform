@@ -1,16 +1,16 @@
 env                    = "Production"
-github_repo_url        = "https://github.com/YOUR_ORG/IndustrialPlatform.git"
+github_repo_url        = "https://github.com/YOUR_ORG/TxMonitoringPlatform.git"
 github_target_revision = "v0.1.0"
-application_namespace  = "industrial-platform"
+application_namespace  = "tx-monitoring"
 
 # Replace these example registry coordinates with immutable, published release references.
 application_images = {
-  edge_gateway       = "ghcr.io/YOUR_ORG/industrial-platform/edge-gateway:0.1.0"
-  ingestion_api      = "ghcr.io/YOUR_ORG/industrial-platform/ingestion-api:0.1.0"
-  diagnostics_worker = "ghcr.io/YOUR_ORG/industrial-platform/diagnostics-worker:0.1.0"
-  sensor_emulator    = "ghcr.io/YOUR_ORG/industrial-platform/sensor-emulator:0.1.0"
-  web_api            = "ghcr.io/YOUR_ORG/industrial-platform/web-api:0.1.0"
-  web_dashboard      = "ghcr.io/YOUR_ORG/industrial-platform/web-dashboard:0.1.0"
+  capture_gateway  = "ghcr.io/YOUR_ORG/tx-monitoring/capture-gateway:0.1.0"
+  ingestion_api    = "ghcr.io/YOUR_ORG/tx-monitoring/ingestion-api:0.1.0"
+  detection_worker = "ghcr.io/YOUR_ORG/tx-monitoring/detection-worker:0.1.0"
+  feed_emulator    = "ghcr.io/YOUR_ORG/tx-monitoring/feed-emulator:0.1.0"
+  web_api          = "ghcr.io/YOUR_ORG/tx-monitoring/web-api:0.1.0"
+  web_dashboard    = "ghcr.io/YOUR_ORG/tx-monitoring/web-dashboard:0.1.0"
 }
 
 # Broker endpoints are identifiers, not credentials. Inject SASL credentials through protected
@@ -28,6 +28,7 @@ application_kafka_bootstrap_servers = [
 kafka_tls_enabled     = true
 kafka_skip_tls_verify = false
 replication_factor    = 3
+min_insync_replicas   = 2
 partitions            = 12
 
 chart_postgresql_enabled          = true
@@ -36,9 +37,8 @@ external_secret = {
   enabled                               = true
   secret_store_name                     = "aws-secretsmanager"
   secret_store_kind                     = "ClusterSecretStore"
-  gemini_api_key_remote_key             = "industrial-platform/prod/gemini-api-key"
-  postgres_connection_string_remote_key = "industrial-platform/prod/postgres-connection-string"
-  postgres_password_remote_key          = "industrial-platform/prod/postgres-password"
+  postgres_connection_string_remote_key = "tx-monitoring/prod/postgres-connection-string"
+  postgres_password_remote_key          = "tx-monitoring/prod/postgres-password"
 }
 
 install_istio                   = false

@@ -1,7 +1,7 @@
 # Postgres storage: heaps, pages, B+trees, and why `MessageId` is a v7 uuid
 
-Everything here is about the write path of `TelemetryReadings`, which takes one insert
-per reading forever and never updates anything. That shape is why these decisions go the
+Everything here is about the write path of `Transactions`, which takes one insert
+per transaction forever and never updates anything. That shape is why these decisions go the
 way they do; a read-heavy table would trade differently.
 
 ## The table is a heap, not a tree
@@ -14,12 +14,12 @@ index.
 This is not universal, and the contrast is already inside this repo. SQLite makes an
 `INTEGER PRIMARY KEY` an alias for the internal rowid, and the table itself *is* a B-tree
 keyed on it — which is exactly why the gateway gets "oldest first" for free by ordering on
-`Id` (see the comment in `Features/Buffer/TelemetryRecord.cs` and its use in
-`UploaderWorker`). InnoDB and SQL Server do the same thing under the name *clustered
-index*.
+`Id` (see the comment in `Features/Buffer/BufferedTransaction.cs` and its use in
+`Features/Upload/UploaderWorker.cs`). InnoDB and SQL Server do the same thing under the name
+*clustered index*.
 
-So: the edge gateway's buffer is a tree whose leaves are the rows. Postgres's
-`TelemetryReadings` is a pile of pages plus three separate trees pointing into it. Do not
+So: the capture gateway's buffer is a tree whose leaves are the rows. Postgres's
+`Transactions` is a pile of pages plus three separate trees pointing into it. Do not
 carry intuitions from one to the other. In particular, making `Id` a time-ordered uuid
 orders the **PK index**, not the table.
 
@@ -73,11 +73,11 @@ also not about pages being physically adjacent on disk — the tree links them l
 they can live anywhere.
 
 Two indexes here take that write hit, so both got v7-shaped keys: the PK on `Id` and the
-unique index on `MessageId` (which is v7 because the sensor mints it that way). The third,
-`(EquipmentId, OccurredAt)`, is already time-ordered per device.
+unique index on `MessageId` (which is v7 because the feed origin mints it that way). The
+`(AccountId, Currency, ...)` companions are already time-ordered per account.
 
 **Alternative: a sequential `bigint` identity for `Id`.** Denser than a uuid and perfectly
-ordered. The database-local `Id` does not need to be minted at the sensor; `MessageId` is the
+ordered. The database-local `Id` does not need to be minted at the feed origin; `MessageId` is the
 offline identity carried across services. This project keeps both as v7 UUIDs for one consistent
 identifier shape, but that is a simplicity choice rather than a distributed-systems requirement.
 
@@ -92,7 +92,7 @@ order as its bytes, so `text` would have given the same insert locality. This ch
 purely about size.
 
 The wire format stays a string — protobuf has no uuid scalar, and the Kafka envelope is
-JSON. The consumer parses at the boundary (`Guid.TryParse` in `TelemetryConsumerWorker`),
+JSON. The consumer parses at the boundary (`Guid.TryParse` in `TransactionConsumerWorker`),
 which folds "malformed id" into the same poison-pill path as "missing id", since neither
 can be deduplicated.
 
@@ -105,34 +105,35 @@ it until the wire is actually hot.
 The unique index on `MessageId` is the entire basis of the "duplicates = 0" claim, so what
 gets put in that column is load-bearing.
 
-**Rejected: `(EquipmentId, SequenceNumber)`.** It is already unique, already monotonic,
-already carried end to end, and narrower than a uuid. It fails on restart: the emulator
-resets `seq` to 0, so a restarted device re-issues sequence numbers it already used, and
-those readings are silently swallowed by the unique index as "duplicates". Real firmware
-would persist `seq` in NVRAM and this would become viable — but the failure mode of
+**Rejected: `(AccountId, SequenceNumber)`.** It is already unique, already monotonic,
+already carried end to end, and narrower than a uuid. It fails on restart: the generator
+resets `seq` to 0 every run, so a restarted run re-issues sequence numbers it already used,
+and those transactions are silently swallowed by the unique index as "duplicates". A durable
+origin would persist `seq` and this would become viable — but the failure mode of
 getting it wrong is *silent data loss*, which is worse than a wider index.
 
 **Rejected: a timestamp-derived key.** Two problems, either fatal. The whole point of the
 key is that a *retried* request carries the *same* id; derive it from `now` and the retry
 computes a new one and the duplicate sails straight through. And clocks jump backwards —
-NTP correcting drift, a VM restoring from a snapshot — so the sensor re-issues ids it has
-already used, and a genuine new reading collides with an old one.
+NTP correcting drift, a VM restoring from a snapshot — so the feed re-issues ids it has
+already used, and a genuine new transaction collides with an old one.
 
 A random-tailed uuid has neither problem: it is minted once, at the origin, and carried
 unchanged through every hop.
 
-## The three indexes on `TelemetryReadings`
+## The three indexes on `Transactions`
 
 | index | why |
 | --- | --- |
-| `PK_TelemetryReadings` on `Id` | EF needs a key. Never queried by hand. |
-| `IX_TelemetryReadings_MessageId` UNIQUE | The deduplication guarantee. A database constraint, not application logic, so it holds even if the `AnyAsync` pre-check races. |
-| `IX_TelemetryReadings_EquipmentId_OccurredAt` | The dashboard's query shape: one machine's readings over a time window, in event-time order. |
+| `PK_Transactions` on `Id` | EF needs a key. Never queried by hand. |
+| `IX_Transactions_MessageId` UNIQUE | The deduplication guarantee. A database constraint, not application logic, so it holds even if the `AnyAsync` pre-check races. |
+| `IX_Transactions_AccountId_Currency_DetectedAt_Id` | Deterministic detector warm-up order: reproduces processing order even when source clocks jump. |
+| `IX_Transactions_AccountId_Currency_OccurredAt` | Velocity reconstruction and the dashboard's query shape: one account's transactions over a time window, in event-time order. |
 
 ## Migration note
 
 The original schema history was squashed into `InitialCreate` while nothing outside a throwaway
-development database had applied it. Later outbox and anomaly-audit changes are ordinary appended
+development database had applied it. Later outbox and decision-evidence changes are ordinary appended
 migrations. Once any migration is deployed to a persistent environment, renumbering or rewriting
 that history would no longer be safe.
 

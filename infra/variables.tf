@@ -39,8 +39,8 @@ variable "github_target_revision" {
 
 variable "application_namespace" {
   type        = string
-  description = "Namespace into which Argo CD deploys IndustrialPlatform."
-  default     = "industrial-platform"
+  description = "Namespace into which Argo CD deploys TxMonitoring."
+  default     = "tx-monitoring"
 }
 
 variable "argocd_namespace" {
@@ -84,7 +84,6 @@ variable "external_secret" {
     enabled                               = bool
     secret_store_name                     = string
     secret_store_kind                     = string
-    gemini_api_key_remote_key             = string
     postgres_connection_string_remote_key = string
     postgres_password_remote_key          = string
   })
@@ -93,29 +92,28 @@ variable "external_secret" {
     condition = !var.external_secret.enabled || alltrue([
       length(trimspace(var.external_secret.secret_store_name)) > 0,
       contains(["SecretStore", "ClusterSecretStore"], var.external_secret.secret_store_kind),
-      length(trimspace(var.external_secret.gemini_api_key_remote_key)) > 0,
       length(trimspace(var.external_secret.postgres_connection_string_remote_key)) > 0,
       length(trimspace(var.external_secret.postgres_password_remote_key)) > 0,
     ])
-    error_message = "Enabled external_secret configuration requires a store and all three remote keys."
+    error_message = "Enabled external_secret configuration requires a store and both Postgres remote keys."
   }
 }
 
 variable "application_secret_name" {
   type        = string
   description = "Name of the pre-provisioned or externally synchronized application Secret."
-  default     = "industrial-platform-secrets"
+  default     = "tx-monitoring-secrets"
 }
 
 variable "application_images" {
   description = "Full image references deployed by the application chart. Use immutable tags/digests for production."
   type = object({
-    edge_gateway       = string
-    ingestion_api      = string
-    diagnostics_worker = string
-    sensor_emulator    = string
-    web_api            = string
-    web_dashboard      = string
+    capture_gateway  = string
+    ingestion_api    = string
+    detection_worker = string
+    feed_emulator    = string
+    web_api          = string
+    web_dashboard    = string
   })
 
   validation {
@@ -236,20 +234,20 @@ variable "kafka_sasl_aws_role_arn" {
 
 variable "events_topic" {
   type        = string
-  description = "Telemetry event topic shared by Terraform and the platform chart."
-  default     = "telemetry-events"
+  description = "Transaction event topic shared by Terraform and the platform chart."
+  default     = "transaction-events"
 }
 
 variable "alerts_topic" {
   type        = string
-  description = "Telemetry alert topic shared by Terraform and the platform chart."
-  default     = "telemetry-alerts"
+  description = "Risk alert topic shared by Terraform and the platform chart."
+  default     = "risk-alerts"
 }
 
 variable "dead_letter_topic" {
   type        = string
-  description = "Diagnostics poison-record topic shared by Terraform and the platform chart."
-  default     = "telemetry-events-dlq"
+  description = "Detection poison-record topic shared by Terraform and the platform chart."
+  default     = "transaction-events-dlq"
 }
 
 variable "replication_factor" {
@@ -263,6 +261,17 @@ variable "replication_factor" {
   }
 }
 
+variable "min_insync_replicas" {
+  type        = number
+  description = "Kafka min.insync.replicas for platform topics. Must not exceed replication_factor; use 2 with the production replication_factor of 3."
+  default     = 1
+
+  validation {
+    condition     = var.min_insync_replicas >= 1 && var.min_insync_replicas <= var.replication_factor
+    error_message = "min_insync_replicas must be between 1 and replication_factor."
+  }
+}
+
 variable "partitions" {
   type        = number
   description = "Partition count for each platform topic."
@@ -272,4 +281,10 @@ variable "partitions" {
     condition     = var.partitions >= 1
     error_message = "partitions must be at least one."
   }
+}
+
+variable "velocity_redis_configuration" {
+  type        = string
+  description = "External/managed Redis endpoint rendered as the detection Velocity__Configuration. Prototype: no Redis is installed by this stack and TLS/auth hardening is still TODO. Redis holds derived velocity windows only; detection degrades without it."
+  default     = "tx-monitoring-redis:6379"
 }

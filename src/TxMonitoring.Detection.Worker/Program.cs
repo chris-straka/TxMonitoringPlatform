@@ -161,6 +161,43 @@ builder.Services.AddHostedService<AlertOutboxPublisherWorker>();
 
 var app = builder.Build();
 
+// One-shot schema owner for production (Helm migration Job). Exits after applying
+// migrations without starting the consumer/outbox hosted services. Workers never migrate
+// at runtime outside Development, so replicas cannot race; they stay unready on the
+// postgres_migrations readiness check until this Job applies the schema.
+if (args.Contains("--migrate-and-exit", StringComparer.Ordinal))
+{
+    using var migrateScope = app.Services.CreateScope();
+    var migrateFactory = migrateScope.ServiceProvider.GetRequiredService<IDbContextFactory<AppDbContext>>();
+    const int maxRetries = 30;
+    var attempt = 0;
+
+    while (true)
+    {
+        try
+        {
+            await using var db = await migrateFactory.CreateDbContextAsync();
+            await db.Database.MigrateAsync();
+            app.Logger.LogInformation("DB Migrations Applied (migrate-and-exit)");
+            return;
+        }
+        catch (Exception ex)
+        {
+            attempt++;
+            if (attempt >= maxRetries)
+                throw new InvalidOperationException(
+                    $"Database migration failed after {maxRetries} attempts.", ex);
+            app.Logger.LogWarning(
+                "DB migration attempt {Attempt}/{MaxRetries} failed: {Error}",
+                attempt,
+                maxRetries,
+                ex.Message
+            );
+            await Task.Delay(TimeSpan.FromSeconds(10));
+        }
+    }
+}
+
 // Migrate on startup for dev
 if (app.Environment.IsDevelopment())
 {

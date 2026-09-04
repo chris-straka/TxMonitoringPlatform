@@ -15,7 +15,7 @@ if ! openssl x509 -in "$AUTHORITY_DIR/ca.crt" -checkend 604800 -noout >/dev/null
     openssl req -x509 -new -sha256 \
         -key "$AUTHORITY_DIR/ca.key" \
         -days 3650 \
-        -subj '/CN=IndustrialPlatform Local Development CA' \
+        -subj '/CN=TxMonitoringPlatform Local Development CA' \
         -addext 'basicConstraints=critical,CA:TRUE,pathlen:0' \
         -addext 'keyUsage=critical,keyCertSign,cRLSign' \
         -out "$AUTHORITY_DIR/ca.crt"
@@ -89,10 +89,10 @@ fi
 
 if ! pfx_is_current "$EDGE_TLS_DIR/client.pfx" sslclient; then
     issue_certificate \
-        edge-gateway-client \
-        edge-gateway-local-1 \
+        capture-gateway-client \
+        capture-gateway-local-1 \
         clientAuth \
-        'URI:spiffe://industrial-platform/gateway/local-1' \
+        'URI:spiffe://tx-monitoring/gateway/local-1' \
         "$EDGE_TLS_DIR" \
         client.pfx
 fi

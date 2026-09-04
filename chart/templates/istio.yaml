@@ -1,12 +1,12 @@
 {{- if .Values.istio.enabled }}
-{{- $webApiName := include "industrial-platform.appName" (dict "root" . "name" "web-api") -}}
-{{- $dashboardName := include "industrial-platform.appName" (dict "root" . "name" "web-dashboard") -}}
+{{- $webApiName := include "tx-monitoring.appName" (dict "root" . "name" "web-api") -}}
+{{- $dashboardName := include "tx-monitoring.appName" (dict "root" . "name" "web-dashboard") -}}
 apiVersion: networking.istio.io/v1beta1
 kind: Gateway
 metadata:
-  name: {{ include "industrial-platform.fullname" . }}
+  name: {{ include "tx-monitoring.fullname" . }}
   labels:
-    {{- include "industrial-platform.labels" . | nindent 4 }}
+    {{- include "tx-monitoring.labels" . | nindent 4 }}
 spec:
   selector:
     {{- toYaml .Values.istio.gatewaySelector | nindent 4 }}
@@ -21,19 +21,19 @@ spec:
 apiVersion: networking.istio.io/v1beta1
 kind: VirtualService
 metadata:
-  name: {{ include "industrial-platform.fullname" . }}
+  name: {{ include "tx-monitoring.fullname" . }}
   labels:
-    {{- include "industrial-platform.labels" . | nindent 4 }}
+    {{- include "tx-monitoring.labels" . | nindent 4 }}
 spec:
   hosts:
     {{- toYaml .Values.istio.hosts | nindent 4 }}
   gateways:
-    - {{ include "industrial-platform.fullname" . }}
+    - {{ include "tx-monitoring.fullname" . }}
   http:
     # The dashboard uses same-origin SignalR, including WebSocket upgrade requests.
     - match:
         - uri:
-            prefix: /telemetryHub
+            prefix: /riskHub
       route:
         - destination:
             host: {{ $webApiName }}

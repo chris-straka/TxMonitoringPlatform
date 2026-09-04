@@ -1,123 +1,182 @@
-# Industrial Platform
+# TxMonitoringPlatform
 
-.NET microservice platform that ingests telemetry from simulated industrial equipment and flags
-anomalies with an online ML.NET detector plus an AI-generated diagnosis. Docker Compose is the
-currently supported runtime; the cloud deployment files are unfinished.
+Near-real-time **transaction risk-monitoring** demo: a synthetic feed of outbound debit
+attempts flows through a durable capture pipeline into Kafka, where a detection worker keeps
+per-account state, assigns an explainable heuristic risk score, persists the decision, and
+publishes review-recommended alerts to a SignalR dashboard.
 
-The sensor emulator is deliberately best-effort, like a constrained device: it keeps acquiring
-while the network is down and may shed samples when its bounded RAM/retry budget is exhausted.
-Once the edge gateway returns `202`, however, the valid reading is on durable local storage and is
-retained through cloud and gateway outages until the cloud settles it.
+It **observes** a transaction feed. It never moves, holds, authorises, captures, clears,
+settles, refunds, or reconciles money; it keeps no balances, blocks nothing, and returns no
+approve/decline decision. It is not a ledger and not a payments system. (Note: "capture" here
+means capture of an **event feed**, not the payments operation of requesting settlement after
+an authorisation — this project never performs that operation.)
+
+One v1 event is one immutable observation of a synthetic outbound debit attempt:
+`MessageId`, `AccountId`, `SequenceNumber`, `OccurredAt`, `AmountMinor`, `Currency`.
+`AmountMinor` is the attempted debit amount in **integer minor units** — no floats anywhere in
+the money path. Approval, decline, posting, reversal, and settlement outcomes are absent, so
+credits, refunds, and declines must stay out of these velocity totals. `AccountId` is an
+account-scoped monitoring key, not a customer identity: activity spread across multiple
+accounts cannot be correlated.
+
+Docker Compose is the supported runnable/demo path. The Helm chart and Terraform stack render,
+lint, and plan cleanly but have never been applied to a real cluster: do not present them as a
+production deployment.
 
 # Quickstart
 
 Docker and Make are the only requirements for the demo path.
 
 ```sh
-git clone git@github.com:chris-straka/industrial-telemetry-platform.git
-cd industrial-telemetry-platform
-cp .env.example .env    # set GEMINI_API_KEY; the diagnostics worker will not start without it
+git clone <this-repo>
+cd TxMonitoringPlatform
 make upd
 ```
 
 The dashboard is at <http://127.0.0.1:5173> and Grafana at <http://127.0.0.1:3000>. Give the
-pipeline a few seconds to produce its first readings, then see [The demo](#the-demo) to take the
-cloud down and watch the edge buffer absorb the outage.
+pipeline a few seconds to produce its first transactions, then see [The demo](#the-demo) to
+take ingestion down and watch the capture buffer absorb the outage.
 
-`Gemini:ApiKey` is validated at startup, so an empty key fails the worker rather than degrading it.
-The other services run without one.
+No API keys or `.env` file are needed: risk decisions are deterministic and computed by
+detection, with no external LLM call anywhere in the path.
+
+> **One-time volume reset.** The target release is a clean cutover, not a compatible upgrade:
+> industrial payloads, topics, tables, and volumes cannot be migrated honestly. If an old
+> checkout's volumes exist on this machine, discard **only this project's** demo data with
+> `docker compose down --volumes` before the first run. Never run that against an unverified
+> project context.
 
 # Data flow
 
 ```
-sensor-emulator (N devices, mints MessageId + OccurredAt)
+feed-emulator (N accounts, mints MessageId + SequenceNumber + OccurredAt)
                           │ HTTP/JSON, LAN
                           ▼
-   ┌─────────────────── edge-gateway ────────────────────┐
-   │  receiver ──► SQLite (WAL, fsync per commit)        │
-   │                    │                                │
-   │                    ▼                                │
-   │              uploader ──► oldest-first, batched     │
-   │                                                     │
-   │  + bounded buffer w/ 429 + Retry-After backpressure │
-   │  + exponential backoff w/ jitter                    │
-   │  + OTel: queue depth, oldest message age            │
-   └────────────────────────┬────────────────────────────┘
-                            │ gRPC unary, up to 200 readings a call (HTTP/2 + mTLS), WAN
+   ┌────────────────── capture-gateway ───────────────────┐
+   │  receiver ──► SQLite (WAL, synchronous=FULL)         │
+   │                    │                                 │
+   │                    ▼                                 │
+   │              uploader ──► oldest-first, batched      │
+   │                                                      │
+   │  + bounded buffer w/ 429 + Retry-After backpressure  │
+   │  + exponential backoff w/ jitter                     │
+   │  + OTel: queue depth, oldest transaction age         │
+   └────────────────────────┬─────────────────────────────┘
+                            │ gRPC unary, up to 200 transactions a call (HTTP/2 + mTLS), WAN
                             ▼
-                        ingestion-api
-                            │ produces telemetry-events, keyed by EquipmentId
+                       ingestion-api
+                            │ produces transaction-events, keyed by AccountId
                             ▼
-   ┌───────────────────── Kafka ───────────────────────┐
-   │                        ▲                          │
-   ▼                        │                          ▼
-diagnostics-worker          │                      web-api
- ├─ dedupes on MessageId    │                       ├─ consumes telemetry-events
- ├─ ML.NET anomaly check    │                       ├─ consumes telemetry-alerts
- ├─ saves to Postgres       │                       └─ relays live data via SignalR
- ├─ calls Gemini            │                                  │
- ├─ poisons ──► telemetry-events-dlq                           │
- └─ alert outbox publisher ─┘                                  ▼
-                                                         web-dashboard
+   ┌───────────────────── Kafka ────────────────────────┐
+   │                        ▲                           │
+   ▼                        │                           ▼
+detection-worker            │                       web-api
+ ├─ replays on MessageId    │                        ├─ consumes transaction-events
+ ├─ amount spike check      │                        ├─ consumes risk-alerts (own group)
+ ├─ Redis velocity windows  │                        └─ relays live data via SignalR
+ ├─ policy: score + reasons │                                   │
+ ├─ saves to Postgres       │                                   ▼
+ ├─ poisons ──► transaction-events-dlq                  web-dashboard
+ └─ alert outbox publisher ─┘
 ```
+
+# Input facts versus decisions
+
+The feed produces **facts**: identity, account, sequence, event time, amount, currency (`CAD`
+in v1). Detection derives everything else:
+
+- deterministic heuristic `RiskScore` (0–100) and `ReviewRecommended`;
+- stable reason codes in fixed rule order, each with metric, observed value, threshold, points;
+- raw per-account spike-detector score, p-value, history count, artifact version;
+- velocity evidence (`Count1m`, `Amount5mMinor`) plus availability status;
+- risk-policy version and content-derived policy configuration hash.
+
+`RiskScore` is a transparent demo-policy ranking, **not** a calibrated fraud probability, and
+`ReviewRecommended` means "emit a monitoring alert", not "fraud occurred". There is no case
+queue, assignment, disposition, or regulatory-review workflow in v1.
+
+The detector is an online per-account IID spike baseline over a `log(1 + AmountMinor)`
+feature — keyed state with warm-up and recovery, not a trained fraud model. The policy rules
+are illustrative demo thresholds (`amount.absolute_high`, `amount.account_spike`,
+`velocity.count_1m`, `velocity.amount_5m`), not production defaults. Correlated rules share a
+family cap so combined evidence still alerts when Redis is down or when no amount spike fires.
 
 # Delivery guarantees
 
 The gateway's `202` splits the pipeline into two reliability zones.
 
-Before it, delivery is best-effort. A full sensor channel drops a new sample, and an HTTP send that
-exhausts its bounded retry policy drops the dequeued sample. Separate metrics count both.
+Before it, delivery is best-effort. The feed emulator is a load generator, not a system of
+record: a full in-memory channel drops the new transaction, and a dequeued item that never
+receives the exact `202` after bounded retries is discarded. Separate metrics
+(`feed.transaction.dropped`, `feed.transaction.delivery_dropped`) count both. Nothing upstream
+of the gateway's `202` claims custody, so this leg is never described as at-least-once.
 
-After it, custody and retry are durable. For a reading that is not deterministically rejected,
-delivery through gRPC and Kafka is at-least-once: the gateway has fsynced the reading to SQLite,
-ambiguous failures retry, and the reading is deleted only after ingestion names its `MessageId`
-accepted. An explicit rejection follows the separate permanent-loss path below.
+After it, custody and retry are durable. The gateway commits the valid transaction to SQLite
+(WAL + `synchronous=FULL`) before returning `202`, retains the row until ingestion names its
+`MessageId` accepted or permanently rejected, and deletes only IDs ingestion explicitly names.
+IDs in neither response list stay queued, so transient Kafka/producer failures never become
+rejections. Kafka delivery and the detection consumer are at-least-once: detection commits an
+offset only after Postgres succeeds, an exact duplicate is verified, or a poison record is
+durably copied to `transaction-events-dlq` first. Postgres has a unique `MessageId` index, so
+a Kafka replay is a no-op row-wise; the alert outbox keeps at-least-once publishing with
+`MessageId` as the dashboard dedupe key.
 
-A deterministic cloud rejection is permanent loss from the live pipeline, not successful
-delivery. The gateway atomically preserves the original row in a bounded SQLite quarantine before
-settling it; inspect recent entries at `GET /buffer/quarantine?limit=100`. Diagnostics handles a
-different poison-record boundary: malformed Kafka values and tombstones are copied to
-`telemetry-events-dlq` before their source offsets are committed. If the DLQ write fails or is
-ambiguous, the source record is retried.
+A deterministic ingestion rejection is permanent loss from the live pipeline, not successful
+delivery. The gateway atomically preserves the original row in a bounded SQLite quarantine
+before settling it; inspect recent entries at `GET /buffer/quarantine?limit=100`. Same ID with
+different immutable content is a 409 conflict that preserves the original; a quarantined retry
+returns the stable terminal 422.
 
-Every reading carries an immutable `MessageId` minted by the sensor. SQLite protects live and
-recently settled gateway IDs; Postgres has a unique index for Kafka replay. Duplicate live events
-and alerts are also filtered by a bounded ID window in the dashboard. At-least-once delivery into
-an idempotent sink leaves the persisted state effectively-once.
-
-Anomaly publication uses a transactional outbox: the diagnostic row and pending alert commit in
-one Postgres transaction, then a separate worker publishes the alert. A crash after Kafka's ACK can
-still publish twice, which is why the alert keeps the same `MessageId`.
-
-The pipeline carries two clocks so an outage stays measurable:
+The pipeline carries three clocks so an outage stays measurable:
 
 | field | whose clock | meaning |
 | --- | --- | --- |
-| `OccurredAt` | sensor | when the reading was taken (event time) |
-| `ReceivedAt` | cloud | when the cloud accepted it (processing time) |
+| `OccurredAt` | feed origin | when the attempt happened (event time) |
+| `ReceivedAt` | ingestion | stamped once per Kafka publication attempt (delivery metadata) |
+| `DetectedAt` | detection | when the decision was created |
 
-Without `OccurredAt`, readings drained after a 30 minute outage would all claim to have
-happened in the seconds it took to flush the queue.
+Without `OccurredAt`, transactions drained after a 30 minute outage would all claim to have
+happened in the seconds it took to flush the queue. `ReceivedAt` may move on retry after a
+lost ACK; the first durable Postgres row wins.
 
-A monotonic `SequenceNumber` makes gaps inside an emulator run visible. The emulator resets it on
-restart and can drop samples before `202`, so a Postgres-only count is an audit signal rather than
-proof of the downstream guarantee or of an unseen tail.
+A monotonic per-account `SequenceNumber` makes gaps inside a generator run visible. The feed
+resets it on restart and can drop transactions before `202`, so a Postgres-only count is an
+audit signal rather than proof of the downstream guarantee or of an unseen tail.
+
+# Redis is a cache, never custody
+
+Redis holds sliding-window velocity counters per `(AccountId, Currency)`, observed atomically
+with a checked-in Lua script. It is derived state:
+
+- ingestion, Kafka consumption, and the Postgres write never depend on Redis being up;
+- when Redis is unreachable, detection persists the decision with `VelocityStatus` Unavailable
+  (never zero counts), increments `detection.velocity.unavailable`, and continues — offsets
+  still progress, nothing is rewound or sent to the DLQ for it;
+- windows rebuild lazily from recent Postgres rows after an outage; recovery repairs state used
+  by **future** decisions and never rescores the outage period.
+
+Losing Redis loses accuracy for a window, never a transaction.
 
 # The demo
 
 ```sh
 make demo-help          # prints the whole script
 make upd                # everything up, queue depth ~0
-make chaos-cloud-down   # kill the cloud; queue climbs, sensors keep producing
+make chaos-cloud-down   # kill ingestion; queue climbs, feed keeps generating
 make chaos-gateway-kill # kill the gateway too, mid-outage; buffer survives
-make chaos-cloud-up     # cloud returns; queue drains oldest-first
-make verify             # briefly quiesce sensors, drain the pipeline, and audit IDs/gaps/lag
+make chaos-cloud-up     # ingestion returns; queue drains oldest-first
+make verify             # briefly quiesce the feed, drain the pipeline, audit IDs/gaps/lag
 ```
 
-Watch `edge_queue_depth` and `edge_oldest_message_age_seconds` in Grafana while it runs. The audit
-temporarily stops any active Compose sensor containers, waits for the edge queue, Diagnostics Kafka
-lag, and alert outbox to drain, takes a stable snapshot, then restarts the sensors that were running.
-It fails on an empty database, duplicate IDs, or a pipeline that does not drain before the timeout.
+Watch `capture_queue_depth` and `capture_oldest_transaction_age_seconds` in Grafana while it
+runs. The audit temporarily stops any active Compose feed containers, waits for the capture
+queue, detection consumer lag, and alert outbox to drain, takes a stable snapshot, then
+restarts the feed containers that were running. It fails on an empty database, duplicate IDs,
+or a pipeline that does not drain before the timeout.
+
+The feed generates deterministic scenarios from `Generator__Scenario` (`Steady`, `HighAmount`,
+`AccountSpike`, `Burst`, `Combined`): steady flow stays below every velocity threshold after
+warm-up, and each other scenario exercises a named rule or combination.
 
 For an automated destructive test that does not touch the normal development project:
 
@@ -125,27 +184,37 @@ For an automated destructive test that does not touch the normal development pro
 ./scripts/e2e.sh
 ```
 
-The isolated Compose harness verifies an ingestion outage plus gateway restart, Postgres consumer
-retry, malformed-record DLQ handling, alert-outbox recovery after a Kafka outage, and rejection of
-a TLS client that does not present the gateway certificate. It uses a unique Compose project and
-volumes on every run.
+The isolated Compose harness verifies an ingestion outage plus gateway restart, Postgres
+consumer retry, malformed-record DLQ handling, alert-outbox recovery after a Kafka outage, and
+rejection of a TLS client that does not present the gateway certificate. It uses a unique
+Compose project and volumes on every run.
 
 # Health and local transport security
 
-The gateway and cloud services expose `/health` for process liveness and `/health/ready` for the
-dependencies needed to accept new work. Readiness checks Kafka topic/partition availability,
-Postgres reachability and current migrations, or SQLite writability as appropriate. Cloud
-reachability is a gateway metric rather than gateway readiness: accepting onto local
-disk during a cloud outage is its job.
+The gateway, ingestion, detection, and web services expose `/health` for process liveness and
+`/health/ready` for the dependencies needed to accept new work:
 
-Compose generates a private development CA, an ingestion server certificate, and a gateway client
-certificate in separate named volumes. The edge validates the ingestion name and private CA;
-ingestion requires the client certificate, validates its client-auth purpose and private CA, and
-checks its SHA-256 fingerprint against an allowlist. Identities survive ordinary restarts, while
-`docker compose down -v` intentionally destroys and regenerates this local PKI.
+| component | readiness means |
+| --- | --- |
+| capture gateway | local SQLite queue is writable |
+| ingestion | required Kafka topics/partitions are available |
+| detection | Kafka topics/assignment, Postgres, and current migrations are available |
+| web API | Kafka topics and consumer assignment are available |
+| Redis | never gates readiness; degradation is metrics/logs |
 
-This mTLS protection covers only edge-to-ingestion gRPC. Sensor-to-edge, Kafka, Postgres, and
-observability traffic remain plaintext and unauthenticated inside the Compose network. See
+Ingestion reachability is a gateway metric rather than gateway readiness: accepting onto local
+disk during an ingestion outage is its job.
+
+Compose generates a private development CA, an ingestion server certificate, and a gateway
+client certificate in separate named volumes. The gateway validates the ingestion name and
+private CA; ingestion requires the client certificate, validates its client-auth purpose and
+private CA, and checks its SHA-256 fingerprint against an allowlist. Identities survive
+ordinary restarts, while `docker compose down -v` intentionally destroys and regenerates this
+local PKI.
+
+This mTLS protection covers only gateway-to-ingestion gRPC. Feed-to-gateway, Kafka, Postgres,
+Redis, and observability traffic remain plaintext and unauthenticated inside the Compose
+network. The dashboard has no production authentication or case-level access control. See
 [Security](docs/Security.md) for the exact boundary and remaining work.
 
 # Install
@@ -160,7 +229,7 @@ To build and test outside Compose:
 - [.NET](https://dotnet.microsoft.com/en-us/download) for `make test` and the individual services
 - [Node](https://nodejs.org/en) for the dashboard's Vite dev server
 
-For the unfinished deployment material, which renders and plans but has never been applied:
+For the prototype deployment material, which renders and plans but has never been applied:
 
 - [tilt](https://tilt.dev/)
 - [Terraform](https://developer.hashicorp.com/terraform/install)
@@ -172,10 +241,12 @@ Compose publishes development ports on `127.0.0.1` only.
 | service | host port | notes |
 | --- | --- | --- |
 | web-dashboard | 5173 | Vite dev server |
-| web-api | 5090 | SignalR hub |
-| ingestion-api | 5089 | REST (HTTP/1.1), manual testing only |
-| ingestion-api | 5091 | gRPC (HTTPS/HTTP/2); requires the generated gateway client certificate |
-| edge-gateway | 5272 | sensor receiver, `/health`, `/health/ready`, and buffer inspection |
+| web-api | 5090 | SignalR hub (`/riskHub`) |
+| ingestion-api | 5089 | health probes only; no debug bypass |
+| ingestion-api | 5091 | gRPC (HTTPS/HTTP/2); requires the gateway client certificate |
+| capture-gateway | 5272 | feed receiver, `/health`, `/health/ready`, and buffer inspection |
+| detection-worker | 5265 | local run only; health probes |
+| redis | 6379 | ephemeral velocity cache; no persistence volume |
 | grafana | 3000 | anonymous viewer; provisioned dashboard, alerts, logs, metrics, and traces |
 | kafka-ui | 8080 | |
 | pgadmin | 5050 | |
@@ -184,11 +255,11 @@ Compose publishes development ports on `127.0.0.1` only.
 
 Design notes live in [docs/](docs/): [Networking](docs/Networking.md),
 [Kafka](docs/Kafka.md), [Observability](docs/Observability.md), [Postgres](docs/DB/Postgres.md),
-[SQLite](docs/DB/SQLite.md), [MLOps](docs/ML/MLOps.md), and [Security](docs/Security.md). Known
-gaps and planned work are in
+[SQLite](docs/DB/SQLite.md), [MLOps](docs/ML/MLOps.md), [Fintech](docs/Fintech.md), and
+[Security](docs/Security.md). Known gaps and planned work are in
 [TODO.md](TODO.md).
 
-Docker Compose is the supported runnable/demo path. The checked-in Helm and Terraform material can
-be linted, rendered, or planned, but it has not been applied and exercised as a production system.
-See the remaining deployment work in [TODO.md](TODO.md) before treating it as deployable
-infrastructure.
+Docker Compose is the supported runnable/demo path. The checked-in Helm and Terraform material
+can be linted, rendered, or planned, but it has not been applied and exercised as a production
+system. See the remaining deployment work in [TODO.md](TODO.md) before treating it as
+deployable infrastructure.

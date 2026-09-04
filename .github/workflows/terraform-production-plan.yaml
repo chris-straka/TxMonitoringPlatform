@@ -55,7 +55,7 @@ jobs:
           KUBECONFIG_B64: ${{ secrets.PROD_KUBECONFIG_B64 }}
         run: |
           umask 077
-          KUBECONFIG_PATH="$RUNNER_TEMP/industrial-platform-kubeconfig"
+          KUBECONFIG_PATH="$RUNNER_TEMP/tx-monitoring-kubeconfig"
           printf 'TF_VAR_kubeconfig_path=%s\n' "$KUBECONFIG_PATH" >> "$GITHUB_ENV"
           printf '%s' "$KUBECONFIG_B64" | base64 --decode > "$KUBECONFIG_PATH"
 

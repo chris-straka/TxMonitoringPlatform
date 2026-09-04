@@ -1,0 +1,26 @@
+@GatewayAddr = http://localhost:5272
+
+### Buffer depth. Run this while ingestion is stopped and watch it climb.
+GET {{GatewayAddr}}/buffer
+
+### Inject a transaction as if it came from the feed generator.
+### MessageId is minted by the CALLER on purpose -- that is the whole point.
+### AmountMinor is integer minor units; currency is CAD in v1.
+POST {{GatewayAddr}}/api/local/transactions
+Content-Type: application/json
+
+{
+  "messageId": "22222222-2222-4222-8222-222222222222",
+  "accountId": "ACCT-0099",
+  "sequenceNumber": 1,
+  "occurredAt": "2026-08-21T12:00:00Z",
+  "amountMinor": 8000,
+  "currency": "CAD"
+}
+
+### Send the request above twice. Both return 202, one row is buffered.
+### The MessageId identity plus content fingerprint collapses the retry;
+### same ID with different content returns 409 and preserves the original.
+
+### Bounded forensic view of permanent ingestion rejections (capped at 200 rows).
+GET {{GatewayAddr}}/buffer/quarantine?limit=10

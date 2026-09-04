@@ -14,22 +14,21 @@ platform:
 
   kafka:
     # The dependency's fullnameOverride below makes this DNS name deterministic.
-    bootstrapServers: industrial-platform-kafka:9092
-    eventsTopic: &eventsTopic telemetry-events
-    alertsTopic: &alertsTopic telemetry-alerts
-    deadLetterTopic: &deadLetterTopic telemetry-events-dlq
+    bootstrapServers: tx-monitoring-kafka:9092
+    eventsTopic: &eventsTopic transaction-events
+    alertsTopic: &alertsTopic risk-alerts
+    deadLetterTopic: &deadLetterTopic transaction-events-dlq
 
   # This Secret is never created with literal values by the chart. Either provision it yourself
-  # or enable externalSecret below. It must contain all three named keys. The connection string
+  # or enable externalSecret below. It must contain both named keys. The connection string
   # should resemble:
-  # Host=industrial-platform-postgresql;Port=5432;Database=industrial_db;Username=industrial;Password=<secret>
+  # Host=tx-monitoring-postgresql;Port=5432;Database=tx_monitoring;Username=txmonitoring;Password=<secret>
   applicationSecret:
-    name: industrial-platform-secrets
-    geminiApiKeyKey: gemini-api-key
+    name: tx-monitoring-secrets
     postgresConnectionStringKey: postgres-connection-string
     postgresPasswordKey: postgres-password
 
-# Optional application-level mTLS for the edge-gateway -> ingestion-api gRPC hop. The chart never
+# Optional application-level mTLS for the capture-gateway -> ingestion-api gRPC hop. The chart never
 # creates these Secrets: provision them before installation (or arrange for another controller to
 # do so). Separate Secrets keep each private key visible only to the workload that owns it.
 transportSecurity:
@@ -40,21 +39,21 @@ transportSecurity:
     serverCertificatePasswordKey: server-pfx-password
     trustedClientCaKey: ca.crt
     allowedClientFingerprintsKey: allowed-client-sha256.txt
-  edgeGateway:
+  captureGateway:
     secretName: ""
     clientCertificateKey: client.pfx
     clientCertificatePasswordKey: client-pfx-password
     trustedServerCaKey: ca.crt
 
 images:
-  edge-gateway: edge-gateway:latest
+  capture-gateway: capture-gateway:latest
   ingestion-api: ingestion-api:latest
-  diagnostics-worker: diagnostics-worker:latest
-  sensor-emulator: sensor-emulator:latest
+  detection-worker: detection-worker:latest
+  feed-emulator: feed-emulator:latest
   web-api: web-api:latest
   web-dashboard: web-dashboard:latest
 
-edgeGateway:
+captureGateway:
   replicaCount: 1
   storage:
     size: 2Gi
@@ -77,11 +76,10 @@ ingestionApi:
   kafkaReadinessTimeoutSeconds: 3
   resources: {}
 
-diagnosticsWorker:
+detectionWorker:
   replicaCount: 1
-  kafkaGroupId: diagnostics-group
+  kafkaGroupId: detection-group
   kafkaReadinessTimeoutSeconds: 3
-  geminiModel: gemini-flash-lite-latest
   consumer:
     baseBackoffSeconds: 1
     maxBackoffSeconds: 30
@@ -91,14 +89,31 @@ diagnosticsWorker:
     maxBackoffSeconds: 30
     publishedRetentionHours: 168
     maintenanceIntervalSeconds: 30
+  velocity:
+    # Prototype: this chart installs no Redis. Point this at an external/managed Redis
+    # endpoint reachable from the detection pods. Velocity state is derived cache only;
+    # when the endpoint is unreachable detection degrades to VelocityStatus Unavailable
+    # instead of failing. TODO: TLS/auth for the velocity store. Do not present this
+    # endpoint as production cache without that hardening.
+    configuration: tx-monitoring-redis:6379
+  migration:
+    # One-shot schema owner. Detection is the sole migration owner: workers in
+    # Production never call MigrateAsync (migrate-on-startup is Development-only in code)
+    # so replicas cannot race this Job; they stay unready on the postgres_migrations
+    # readiness check until the schema is current. Run the Job once per release before
+    # the worker Deployment rolls, e.g.: helm upgrade --wait with this Job enabled.
+    enabled: true
+    backoffLimit: 3
+    activeDeadlineSeconds: 600
+    ttlSecondsAfterFinished: 600
   resources: {}
 
-sensorEmulator:
-  # ReplicaId owns a distinct equipment-number range. Keep replicaCount at one; add separately
+feedEmulator:
+  # ReplicaId owns a distinct account-number range. Keep replicaCount at one; add separately
   # configured releases (with different replicaId values) when demonstrating a larger fleet.
   replicaCount: 1
   replicaId: 0
-  deviceCount: 4
+  accountCount: 4
   intervalSeconds: 2
   bufferCapacity: 10000
   resources: {}
@@ -124,9 +139,6 @@ externalSecret:
     kind: ClusterSecretStore
   # When enabled, set each remote key. `property` is optional for a scalar remote secret.
   remoteRefs:
-    geminiApiKey:
-      key: ""
-      property: ""
     postgresConnectionString:
       key: ""
       property: ""
@@ -143,15 +155,15 @@ istio:
     - "*"
 
 # Dependency configuration. PostgreSQL reads its password from the same pre-provisioned Secret as
-# the diagnostics worker; no database or Gemini credentials are committed in this values file.
+# the detection worker; no database credentials are committed in this values file.
 postgresql:
   enabled: true
-  fullnameOverride: industrial-platform-postgresql
+  fullnameOverride: tx-monitoring-postgresql
   auth:
     enablePostgresUser: false
-    username: industrial
-    database: industrial_db
-    existingSecret: industrial-platform-secrets
+    username: txmonitoring
+    database: tx_monitoring
+    existingSecret: tx-monitoring-secrets
     secretKeys:
       userPasswordKey: postgres-password
   primary:
@@ -163,7 +175,7 @@ postgresql:
 # keeps the dependency defaults; adding application SASL/TLS configuration is separate hardening.
 kafka:
   enabled: true
-  fullnameOverride: industrial-platform-kafka
+  fullnameOverride: tx-monitoring-kafka
   listeners:
     client:
       protocol: PLAINTEXT
@@ -186,6 +198,9 @@ kafka:
     # application readiness checks require these topics before Helm would run the hook.
     useHelmHooks: false
     numPartitions: 6
+    # Single-broker local demo: replication factor 1 proves nothing about broker-loss
+    # durability. Production-shaped topology (Terraform) uses replication factor 3 with
+    # min.insync.replicas=2; producers already use Acks.All with idempotence enabled.
     replicationFactor: 1
     topics:
       - name: *eventsTopic

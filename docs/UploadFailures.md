@@ -2,7 +2,7 @@
 
 When an upload does not fully succeed, the drain loop needs three separate answers:
 
-- Is the cloud reachable? (drives `edge.cloud.reachable` and the backoff)
+- Is the cloud reachable? (drives `capture.ingestion.reachable` and the backoff)
 - Will this batch *ever* be accepted? (drives whether retrying it is progress or a stall)
 - What may be deleted from SQLite? (drives the invariant)
 
@@ -50,10 +50,10 @@ machine.
 
 `Malformed` and `Refused` now do the same thing, and that is the point: neither can be
 fixed by resending, so both hold the queue and page a human. They stay separate outcomes
-because they tag `edge.upload.failures` differently and send an operator to different
+because they tag `capture.upload.failures` differently and send an operator to different
 machines -- one to the contract, one to the credentials.
 
-Caveat worth saying out loud: `TelemetryService` returns none of these statuses. It
+Caveat worth saying out loud: `TransactionIngestion` returns none of these statuses. It
 answers OK and names its per-reading rejections in `rejected_message_ids`. A failed
 Compose client-certificate check ends the TLS handshake before the service can return a
 gRPC `Unauthenticated` status. `Malformed` and `Refused` therefore remain defensive
@@ -77,10 +77,10 @@ the new data is the data someone is watching a dashboard for.
 **Drop the whole batch.** Throws away 199 readings the cloud never objected to, on the
 evidence of one it did.
 
-**Have the cloud name the offender (chosen).** `TelemetryResponse.rejected_message_ids`
+**Have the cloud name the offender (chosen).** `IngestResponse.rejected_message_ids`
 carries the ids the server validated and refused. The gateway atomically copies exactly
 those original rows to its bounded quarantine, adds their settled-ID markers, removes
-them from the live queue, counts them on `edge.telemetry.rejected`, and keeps sending
+them from the live queue, counts them on `capture.transaction.rejected`, and keeps sending
 full batches throughout.
 
 **Rejected: isolate by resending at batch size 1.** A whole-call `InvalidArgument` says
@@ -90,7 +90,7 @@ filling behind it. It also needed a cap on consecutive drops, because a cloud th
 *everything* invalid would empty the buffer one record per round trip and every drop
 would look locally reasonable. Naming the ids removes the search and the cap with it.
 
-The cost is that the server must now validate. `TelemetryReadingValidator` holds the
+The cost is that the server must now validate. `TransactionRecordValidator` holds the
 rules, and each one has to be a condition no retry can fix, because failing it deletes
 the reading. Anything transient belongs in the catch around `ProduceAsync` instead, which
 leaves the reading in the buffer.
@@ -115,7 +115,7 @@ gaps using inferred restart boundaries; it does not use the invalid `MAX(sequenc
 calculation across all restarts. A database-only audit still cannot assign a gap to an intentional
 sensor drop versus a downstream rejection, nor can it infer a dropped tail after the final row.
 The reliable edge-side evidence for a cloud rejection is therefore the error log,
-`edge.telemetry.rejected`, and the original payload in `QuarantinedTelemetryRecords`. Operators can
+`capture.transaction.rejected`, and the original payload in `QuarantinedTransactions`. Operators can
 inspect the newest rows through `GET /buffer/quarantine?limit=100`; the endpoint caps each response
 at 200 rows.
 
@@ -131,7 +131,7 @@ the cloud explicitly rejected it.
   disk space, which also means evidence expires unless an operator copies it elsewhere.
 - Nothing rate-limits how much the cloud may reject. A validation rule someone tightens, or a proto
   skew that makes every reading look invalid, can empty the live buffer as fast as batches go out
-  while the bounded quarantine evicts older evidence. `edge.telemetry.rejected` is therefore an
+  while the bounded quarantine evicts older evidence. `capture.transaction.rejected` is therefore an
   alert, not merely a graph.
 - `_consecutiveFailures` and `_consecutiveUnreachable` form an implicit state machine on a
   `BackgroundService`. They are deliberately not one field: `_consecutiveFailures` sizes

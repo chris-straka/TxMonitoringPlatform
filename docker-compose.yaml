@@ -12,7 +12,7 @@ services:
       - ./scripts/create-dev-pki.sh:/usr/local/bin/create-dev-pki.sh:ro
       - dev_pki_authority_data:/authority
       - ingestion_tls_data:/ingestion
-      - edge_gateway_tls_data:/edge
+      - capture_gateway_tls_data:/edge
 
   web-dashboard:
     image: node:24-alpine
@@ -108,8 +108,8 @@ services:
     ports:
       - "127.0.0.1:5272:8080"
     volumes:
-      - edge_buffer_data:/data
-      - edge_gateway_tls_data:/tls:ro
+      - capture_buffer_data:/data
+      - capture_gateway_tls_data:/tls:ro
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
       # Points at the ingestion API's HTTP/2 port, not its REST port.
@@ -118,7 +118,7 @@ services:
       - TransportSecurity__ClientCertificatePath=/tls/client.pfx
       - TransportSecurity__ClientCertificatePassword=
       - TransportSecurity__TrustedServerCaPath=/tls/ca.crt
-      - Buffer__Path=/data/edge-buffer.db
+      - Buffer__Path=/data/capture-buffer.db
       - Buffer__MaxDepth=500000
       - Buffer__SettledIdRetentionHours=24
       - Buffer__QuarantineRetentionHours=168
@@ -395,7 +395,7 @@ services:
     image: prom/prometheus:v3.11.3
     volumes:
       - ./monitoring/prometheus.yaml:/etc/prometheus/prometheus.yml:ro
-      - ./monitoring/prometheus-alerts.yaml:/etc/prometheus/rules/industrial-platform.yaml:ro
+      - ./monitoring/prometheus-alerts.yaml:/etc/prometheus/rules/tx-monitoring.yaml:ro
       - prometheus_data:/prometheus
     ports:
       - "127.0.0.1:9090:9090"
@@ -422,8 +422,8 @@ services:
       - "127.0.0.1:3000:3000"
     volumes:
       - ./monitoring/grafana-datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml:ro
-      - ./monitoring/grafana-dashboard-provider.yaml:/etc/grafana/provisioning/dashboards/industrial-platform.yaml:ro
-      - ./monitoring/grafana-dashboard-industrial-platform.json:/var/lib/grafana/dashboards/industrial-platform.json:ro
+      - ./monitoring/grafana-dashboard-provider.yaml:/etc/grafana/provisioning/dashboards/tx-monitoring.yaml:ro
+      - ./monitoring/grafana-dashboard-txmonitoring.json:/var/lib/grafana/dashboards/tx-monitoring.json:ro
       - grafana_data:/var/lib/grafana/data
     environment:
       - GF_AUTH_ANONYMOUS_ENABLED=true
@@ -439,7 +439,7 @@ services:
 volumes:
   dashboard_node_modules:
   postgres_data:
-  edge_buffer_data:
+  capture_buffer_data:
   kafka_data:
   loki_data:
   prometheus_data:
@@ -447,4 +447,4 @@ volumes:
   grafana_data:
   dev_pki_authority_data:
   ingestion_tls_data:
-  edge_gateway_tls_data:
+  capture_gateway_tls_data:

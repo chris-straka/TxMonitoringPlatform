@@ -1,9 +1,6 @@
 using System.Text;
-using System.Text.Json;
 
 using Confluent.Kafka;
-
-using Google.GenAI;
 
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -11,22 +8,24 @@ using Microsoft.Extensions.Options;
 using TxMonitoring.Detection.Worker.Configuration;
 using TxMonitoring.Detection.Worker.Infrastructure;
 using TxMonitoring.Detection.Worker.Infrastructure.Data;
-using TxMonitoring.Shared;
 
 namespace TxMonitoring.Detection.Worker.Features.Diagnostics;
 
 /// <summary>
-/// Publishes committed anomaly alerts from the Postgres outbox to Kafka.
+/// Publishes committed review alerts from the Postgres outbox to Kafka.
 /// </summary>
+/// <remarks>
+/// The outbox row already holds the complete deterministic payload: the consumer
+/// committed it in the same Postgres transaction as the decision, so this worker
+/// forwards it unchanged. There is no enrichment step and no network call here.
+/// </remarks>
 public sealed class AlertOutboxPublisherWorker(
     IDbContextFactory<AppDbContext> contextFactory,
     IProducer<string, string> producer,
     IOptions<KafkaOptions> kafkaOptions,
     IOptions<OutboxOptions> outboxOptions,
-    IOptions<GeminiOptions> geminiOptions,
     WorkerMetrics metrics,
-    ILogger<AlertOutboxPublisherWorker> logger,
-    Client gemini
+    ILogger<AlertOutboxPublisherWorker> logger
 ) : BackgroundService
 {
     private readonly TimeSpan _idleDelay = TimeSpan.FromMilliseconds(
@@ -62,7 +61,6 @@ public sealed class AlertOutboxPublisherWorker(
                         await SafeDelayAsync(_idleDelay, stoppingToken);
                         break;
                     case PublishOutcome.Published:
-                    case PublishOutcome.Enriched:
                         _consecutiveFailures = 0;
                         break;
                     case PublishOutcome.Failed:
@@ -138,17 +136,9 @@ public sealed class AlertOutboxPublisherWorker(
             return PublishOutcome.Empty;
         }
 
-        if (TryReadPendingEnrichment(pending.Payload, out var pendingAlert))
-        {
-            pending.Payload = await BuildEnrichedPayloadAsync(pendingAlert!, cancellationToken);
-            await db.SaveChangesAsync(cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
-            return PublishOutcome.Enriched;
-        }
-
         var alert = new Message<string, string>
         {
-            Key = pending.EquipmentId,
+            Key = pending.AccountId,
             Value = pending.Payload,
         };
 
@@ -192,9 +182,9 @@ public sealed class AlertOutboxPublisherWorker(
             metrics.AlertFailures.Add(1);
             logger.LogError(
                 ex,
-                "Alert outbox message {OutboxId} for {EquipmentId} was not published; it remains pending.",
+                "Alert outbox message {OutboxId} for {AccountId} was not published; it remains pending.",
                 pending.Id,
-                pending.EquipmentId
+                pending.AccountId
             );
             return PublishOutcome.Failed;
         }
@@ -207,59 +197,6 @@ public sealed class AlertOutboxPublisherWorker(
 
         metrics.AlertsPublished.Add(1);
         return PublishOutcome.Published;
-    }
-
-    private async Task<string> BuildEnrichedPayloadAsync(
-        TelemetryAlertEnvelope alert,
-        CancellationToken cancellationToken
-    )
-    {
-        logger.LogWarning("ANOMALY: {Id}. Requesting AI analysis...", alert.EquipmentId);
-
-        string aiAdvice;
-        using var aiTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        aiTimeout.CancelAfter(TimeSpan.FromSeconds(10));
-
-        try
-        {
-            var prompt =
-                $"Equipment {alert.EquipmentId} anomaly. Temp: {alert.EngineTemperature:F1}C. Provide 3 steps.";
-            var response = await gemini.Models.GenerateContentAsync(
-                model: geminiOptions.Value.Model,
-                contents: prompt,
-                cancellationToken: aiTimeout.Token
-            );
-
-            var responseText = response.Text ?? throw new Exception("Could not fetch from AI");
-            aiAdvice = responseText.Length <= 8_000 ? responseText : responseText[..8_000];
-        }
-        catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
-        {
-            logger.LogError(exception, "AI call failed");
-            metrics.AiFailures.Add(1);
-            aiAdvice = "AI unavailable";
-        }
-
-        return JsonSerializer.Serialize(alert with { Diagnostics = aiAdvice });
-    }
-
-    private static bool TryReadPendingEnrichment(
-        string payload,
-        out TelemetryAlertEnvelope? alert
-    )
-    {
-        try
-        {
-            alert = JsonSerializer.Deserialize<TelemetryAlertEnvelope>(payload);
-            return alert is not null && string.IsNullOrEmpty(alert.Diagnostics);
-        }
-        catch (JsonException)
-        {
-            // Payloads are created by this process, but preserve the existing behavior for a
-            // manually repaired/legacy row: publish it unchanged instead of wedging the outbox.
-            alert = null;
-            return false;
-        }
     }
 
     private async Task BackoffAsync(CancellationToken cancellationToken)
@@ -291,7 +228,6 @@ public sealed class AlertOutboxPublisherWorker(
     private enum PublishOutcome
     {
         Empty,
-        Enriched,
         Published,
         Failed,
     }

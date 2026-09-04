@@ -10,19 +10,19 @@ using Microsoft.Extensions.Options;
 using TxMonitoring.Capture.Gateway.Configuration;
 using TxMonitoring.Capture.Gateway.Features.Buffer;
 using TxMonitoring.Capture.Gateway.Infrastructure;
-using TxMonitoring.Ingestion.Api; // generated from Protos/telemetry.proto
+using TxMonitoring.Ingestion.V1; // generated from Protos/transactions.proto
 
 namespace TxMonitoring.Capture.Gateway.Features.Upload;
 
 /// <summary>
-/// THE SENDER. Drains local SQLite buffer to send readings to the cloud over gRPC.
+/// THE SENDER. Drains the local SQLite buffer to send transactions to ingestion over gRPC.
 /// </summary>
 /// <remarks>
 /// This loop is independent from acquisition (receiver endpoint)
 ///
-/// Delivery is ALO and ambiguous failures re-send. Diagnostics/Postgres dedupes MessageId, while
+/// Delivery is ALO and ambiguous failures re-send. Detection/Postgres dedupes MessageId, while
 /// the live dashboard keeps its own bounded duplicate window.
-/// We send oldest-first ID and delete only the readings the cloud named in its response
+/// We send oldest-first ID and delete only the transactions ingestion named in its response
 ///
 /// Doesn't use gRPC's built-in retry policy
 /// It would re-send everything without knowing what persisted
@@ -89,14 +89,14 @@ public class UploaderWorker(
                     scope.ServiceProvider.GetRequiredService<BufferSettlementStore>();
                 // Type created by grpc_csharp_plugin (with .proto's service)
                 var grpcClient =
-                    scope.ServiceProvider.GetRequiredService<TelemetryIngestion.TelemetryIngestionClient>();
+                    scope.ServiceProvider.GetRequiredService<TransactionIngestion.TransactionIngestionClient>();
 
                 // Refreshes depth values for Otel (cloud outage visibility)
                 await RefreshGaugesAsync(db, stoppingToken);
 
                 // SQLite assigns IDs in insert order (lower ID -> older)
                 var pending = await db
-                    .TelemetryRecords.OrderBy(r => r.Id) // oldest -> youngest
+                    .BufferedTransactions.OrderBy(r => r.Id) // oldest -> youngest
                     .Take(_batchSize) // take first N rows
                     .ToListAsync(stoppingToken);
 
@@ -108,7 +108,7 @@ public class UploaderWorker(
                 }
 
                 var batch = pending
-                    .Select(item => new OutgoingReading(item, ToReading(item)))
+                    .Select(item => new OutgoingTransaction(item, ToRecord(item)))
                     .ToList();
 
                 var result = await UploadBatchAsync(grpcClient, batch, stoppingToken);
@@ -132,8 +132,8 @@ public class UploaderWorker(
                 }
 
                 var settledRows = batch
-                    .Where(p => result.Settled.Contains(p.Record.MessageId))
-                    .Select(p => p.Record)
+                    .Where(p => result.Settled.Contains(p.Row.MessageId))
+                    .Select(p => p.Row)
                     .ToList();
 
                 await settlementStore.SettleAsync(
@@ -151,7 +151,7 @@ public class UploaderWorker(
                 if (result.RejectedIds.Count > 0)
                 {
                     logger.LogError(
-                        "Cloud permanently rejected {Count} readings. Quarantined {MessageIds} "
+                        "Ingestion permanently rejected {Count} transactions. Quarantined {MessageIds} "
                             + "with a generic reason because the response has no per-reading cause.",
                         result.RejectedIds.Count,
                         string.Join(", ", result.RejectedIds)
@@ -161,7 +161,7 @@ public class UploaderWorker(
                 if (settledRows.Count < batch.Count)
                 {
                     logger.LogWarning(
-                        "Cloud settled {Settled}/{Sent} (faulted: {Faulted}). Retrying the remainder.",
+                        "Ingestion settled {Settled}/{Sent} (faulted: {Faulted}). Retrying the remainder.",
                         settledRows.Count,
                         batch.Count,
                         !result.Complete
@@ -186,29 +186,29 @@ public class UploaderWorker(
     }
 
     private async Task<UploadResult> UploadBatchAsync(
-        TelemetryIngestion.TelemetryIngestionClient grpcClient,
-        List<OutgoingReading> batch,
+        TransactionIngestion.TransactionIngestionClient grpcClient,
+        List<OutgoingTransaction> batch,
         CancellationToken cancellationToken
     )
     {
         var startedAt = Stopwatch.GetTimestamp();
         var outcome = "local_failure";
 
-        // Gateway returns 202 and breaks incoming sensor traces
+        // Gateway returns 202 and breaks incoming generator traces
         // This fans those traces in so the new batch trace can ref them
         var links = BuildTraceLinks(batch);
 
         // Create a new Activity (aka span in .NET)
         // Activity is null if nothing listens to the source
         using var activity = EdgeTracing.Source.StartActivity(
-            "edge.upload",
+            "capture.upload",
             ActivityKind.Client,
             parentContext: default,
             tags:
             [
-                new("edge.batch.size", batch.Count),
-                new("edge.batch.linked_traces", links.Count),
-                new("edge.upload.attempt", _consecutiveFailures + 1),
+                new("capture.batch.size", batch.Count),
+                new("capture.batch.linked_traces", links.Count),
+                new("capture.upload.attempt", _consecutiveFailures + 1),
             ],
             links: links
         );
@@ -216,28 +216,28 @@ public class UploaderWorker(
         try
         {
             // Create a new request for the batch
-            var request = new UploadTelemetryRequest
+            var request = new UploadTransactionsRequest
             {
-                Readings = { batch.Select(p => p.Reading) }, // don't include DB rows
+                Transactions = { batch.Select(p => p.Record) }, // don't include DB rows
             };
 
-            activity?.SetTag("edge.batch.bytes", request.CalculateSize());
+            activity?.SetTag("capture.batch.bytes", request.CalculateSize());
 
-            using var call = grpcClient.UploadTelemetryAsync(
+            using var call = grpcClient.UploadTransactionsAsync(
                 request,
-                deadline: DateTime.UtcNow.Add(_uploadTimeout), // if cloud hangs
+                deadline: DateTime.UtcNow.Add(_uploadTimeout), // if ingestion hangs
                 cancellationToken: cancellationToken
             );
 
-            // TelemetryResponse isn't disposable, I couldn't await + using
+            // IngestResponse isn't disposable, I couldn't await + using
             var response = await call.ResponseAsync;
             outcome = "answered";
 
-            activity?.SetTag("edge.batch.accepted", response.AcceptedMessageIds.Count);
-            activity?.SetTag("edge.batch.rejected", response.RejectedMessageIds.Count);
+            activity?.SetTag("capture.batch.accepted", response.AcceptedMessageIds.Count);
+            activity?.SetTag("capture.batch.rejected", response.RejectedMessageIds.Count);
 
             var sentIds = batch
-                .Select(item => item.Record.MessageId)
+                .Select(item => item.Row.MessageId)
                 .ToHashSet(StringComparer.Ordinal);
             var acceptedIds = response.AcceptedMessageIds.ToHashSet(StringComparer.Ordinal);
             var rejectedIds = response.RejectedMessageIds.ToHashSet(StringComparer.Ordinal);
@@ -264,7 +264,7 @@ public class UploaderWorker(
                 UploadOutcome.Answered,
                 [.. acceptedIds],
                 [.. rejectedIds],
-                response.Success
+                response.Complete
             );
         }
         catch (RpcException ex) when (IsShutdownCancellation(ex.StatusCode, cancellationToken))
@@ -328,15 +328,15 @@ public class UploaderWorker(
     }
 
     // Changing the EF Type to the protobuf type
-    private static TelemetryReading ToReading(TelemetryRecord item) =>
+    private static TransactionRecord ToRecord(BufferedTransaction item) =>
         new()
         {
             MessageId = item.MessageId,
-            EquipmentId = item.EquipmentId,
+            AccountId = item.AccountId,
             SequenceNumber = item.SequenceNumber,
             OccurredAt = Timestamp.FromDateTimeOffset(item.OccurredAt),
-            EngineTemperature = item.EngineTemperature,
-            OilPressure = item.OilPressure,
+            AmountMinor = item.AmountMinor,
+            Currency = item.Currency,
             Traceparent = item.TraceParent ?? "",
         };
 
@@ -355,9 +355,9 @@ public class UploaderWorker(
     /// </remarks>
     /// <param name="batch">Split into SQLite rows and sensor readings built from them</param>
     /// <returns>List of links with trace information</returns>
-    private static List<ActivityLink> BuildTraceLinks(List<OutgoingReading> batch) =>
+    private static List<ActivityLink> BuildTraceLinks(List<OutgoingTransaction> batch) =>
         batch
-            .Select(p => p.Record.TraceParent)
+            .Select(p => p.Row.TraceParent)
             .Where(tp => !string.IsNullOrEmpty(tp))
             .Select(tp =>
                 ActivityContext.TryParse(tp, null, isRemote: true, out var ctx) ? ctx : default
@@ -383,7 +383,7 @@ public class UploaderWorker(
 
         // This is fast because it grabs one row off the PK (can run every pass)
         var oldest = await db
-            .TelemetryRecords.OrderBy(r => r.Id)
+            .BufferedTransactions.OrderBy(r => r.Id)
             .Select(r => (DateTimeOffset?)r.OccurredAt) // changes default to null (not 0001-01-01)
             .FirstOrDefaultAsync(cancellationToken);
 
@@ -461,9 +461,9 @@ public class UploaderWorker(
             new(outcome, [], [], Complete: false);
     }
 
-    private readonly record struct OutgoingReading(
-        TelemetryRecord Record,
-        TelemetryReading Reading
+    private readonly record struct OutgoingTransaction(
+        BufferedTransaction Row,
+        TransactionRecord Record
     );
 
     // Task.Delay throws when the token trips, and one caller is the loop's catch block

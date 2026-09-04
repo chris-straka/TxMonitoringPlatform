@@ -17,24 +17,17 @@ using TxMonitoring.Shared;
 
 namespace TxMonitoring.Detection.Worker.Features.Diagnostics;
 
-public class TelemetryConsumerWorker(
+public class TransactionConsumerWorker(
     IDbContextFactory<AppDbContext> contextFactory,
-    ILogger<TelemetryConsumerWorker> logger,
+    ILogger<TransactionConsumerWorker> logger,
     IOptions<KafkaOptions> kafkaOptions,
     IOptions<ConsumerOptions> consumerOptions,
     IDeadLetterPublisher deadLetterPublisher,
-    DiagnosticsConsumerReadiness readiness,
+    DetectionConsumerReadiness readiness,
     ModelEngine modelEngine,
     WorkerMetrics metrics
 ) : BackgroundService
 {
-    private static readonly JsonSerializerOptions TelemetryJsonOptions = new()
-    {
-        // Positional-record constructor parameters are the Kafka schema. Treat an absent numeric
-        // field as malformed instead of silently accepting its CLR default of zero.
-        RespectRequiredConstructorParameters = true,
-    };
-
     private int _consecutiveFailures;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -100,13 +93,15 @@ public class TelemetryConsumerWorker(
                         continue;
                     }
 
-                    TelemetryEnvelope? data;
+                    TransactionEvent? data;
 
                     try
                     {
-                        data = JsonSerializer.Deserialize<TelemetryEnvelope>(
+                        // One shared serializer configuration; the positional constructor
+                        // keeps a renamed member a compile-time break, not a silent default.
+                        data = JsonSerializer.Deserialize<TransactionEvent>(
                             consumeResult.Message.Value,
-                            TelemetryJsonOptions
+                            TransactionJson.Options
                         );
                     }
                     catch (JsonException)
@@ -136,7 +131,7 @@ public class TelemetryConsumerWorker(
                     data = NormalizeTimestamps(data!);
 
                     activity = WorkerTracing.Source.StartActivity(
-                        "telemetry.process",
+                        "transaction.process",
                         ActivityKind.Consumer,
                         ReadTraceContext(consumeResult.Message.Headers),
                         tags:
@@ -145,11 +140,11 @@ public class TelemetryConsumerWorker(
                             new("messaging.destination.name", consumeResult.Topic),
                             new("messaging.kafka.offset", consumeResult.Offset.Value),
                             new("messaging.kafka.partition", consumeResult.Partition.Value),
-                            new("equipment.id", data.EquipmentId),
+                            new("account.id", data.AccountId),
                         ]
                     );
 
-                    await HandleReadingAsync(data, messageId, stoppingToken);
+                    await HandleTransactionAsync(data, messageId, stoppingToken);
                     consumer.Commit(consumeResult);
                     _consecutiveFailures = 0;
                 }
@@ -243,15 +238,15 @@ public class TelemetryConsumerWorker(
             : default;
     }
 
-    private async Task HandleReadingAsync(
-        TelemetryEnvelope data,
+    private async Task HandleTransactionAsync(
+        TransactionEvent data,
         Guid messageId,
         CancellationToken stoppingToken
     )
     {
         await using var db = await contextFactory.CreateDbContextAsync(stoppingToken);
 
-        if (await db.TelemetryReadings.AnyAsync(r => r.MessageId == messageId, stoppingToken))
+        if (await db.Transactions.AnyAsync(r => r.MessageId == messageId, stoppingToken))
         {
             logger.LogDebug("Duplicate MessageId {MessageId} skipped.", messageId);
             metrics.RecordDuplicate("select");
@@ -263,19 +258,23 @@ public class TelemetryConsumerWorker(
 
         try
         {
+            // INTERIM detector input: the raw minor-unit amount as a float. The temperature
+            // artifact's scale is meaningless on money; the policy port regenerates an
+            // amount-feature artifact with a shared log transform and (AccountId, Currency)
+            // isolation instead of renaming the old binary.
             result = await modelEngine.InspectAsync(
-                data.EquipmentId,
-                (float)data.EngineTemperature,
+                data.AccountId,
+                (float)data.AmountMinor,
                 async cancellationToken =>
                 {
                     var history = await db
-                        .TelemetryReadings.Where(r => r.EquipmentId == data.EquipmentId)
+                        .Transactions.Where(r => r.AccountId == data.AccountId)
                         // Reconstruct the order in which this stateful detector consumed rows.
-                        // Sensor clocks may jump, so event time is not a safe processing order.
-                        .OrderByDescending(r => r.PersistedAt)
+                        // Origin clocks may jump, so event time is not a safe processing order.
+                        .OrderByDescending(r => r.DetectedAt)
                         .ThenByDescending(r => r.Id)
                         .Take(ModelEngine.HistoryLength)
-                        .Select(r => (float)r.EngineTemperature)
+                        .Select(r => (float)r.AmountMinor)
                         .ToListAsync(cancellationToken);
 
                     history.Reverse();
@@ -286,25 +285,25 @@ public class TelemetryConsumerWorker(
             modelAdvanced = true;
 
             logger.LogDebug(
-                "ML - ID: {Id}, Seq: {Seq}, Temp: {Temp:F1}, IsAnomaly: {IsAnomaly}, Score: {Score:F4}, P-Value: {PVal:F4}, Lag: {Lag:F1}s",
-                data.EquipmentId,
+                "ML - ID: {Id}, Seq: {Seq}, Amount: {Amount}, IsAnomaly: {IsAnomaly}, Score: {Score:F4}, P-Value: {PVal:F4}, Lag: {Lag:F1}s",
+                data.AccountId,
                 data.SequenceNumber,
-                data.EngineTemperature,
+                data.AmountMinor,
                 result.IsAnomaly,
                 result.Score,
                 result.PValue,
                 (data.ReceivedAt - data.OccurredAt).TotalSeconds
             );
 
-            var reading = new TelemetryReading
+            var transaction = new MonitoredTransaction
             {
                 MessageId = messageId,
-                EquipmentId = data.EquipmentId,
+                AccountId = data.AccountId,
                 SequenceNumber = data.SequenceNumber,
                 OccurredAt = data.OccurredAt,
                 ReceivedAt = data.ReceivedAt,
-                EngineTemperature = data.EngineTemperature,
-                OilPressure = data.OilPressure,
+                AmountMinor = data.AmountMinor,
+                Currency = data.Currency,
                 IsAnomaly = result.IsAnomaly,
                 DetectorScore = result.Score,
                 DetectorPValue = result.PValue,
@@ -312,20 +311,21 @@ public class TelemetryConsumerWorker(
                 DetectorVersion = result.DetectorVersion,
             };
 
-            db.TelemetryReadings.Add(reading);
+            db.Transactions.Add(transaction);
 
             if (result.IsAnomaly)
             {
+                // The outbox row carries the complete observed event. The publisher forwards
+                // it unchanged; the full RiskAlert decision envelope replaces this interim
+                // payload with the policy port.
                 db.AlertOutboxMessages.Add(
                     new AlertOutboxMessage
                     {
                         MessageId = messageId,
-                        EquipmentId = data.EquipmentId,
-                        // Empty Diagnostics is an internal "needs enrichment" marker. The outbox
-                        // publisher performs the optional network call after this telemetry row and
-                        // outbox row have committed, so Gemini latency cannot stall source offsets.
-                        Payload = BuildPendingAnomalyPayload(data),
+                        AccountId = data.AccountId,
+                        Payload = JsonSerializer.Serialize(data, TransactionJson.Options),
                         TraceParent = Activity.Current?.Id,
+                        CreatedAt = transaction.DetectedAt,
                     }
                 );
             }
@@ -338,15 +338,15 @@ public class TelemetryConsumerWorker(
             when (ex.InnerException is PostgresException { SqlState: "23505" })
         {
             if (modelAdvanced)
-                modelEngine.Invalidate(data.EquipmentId);
+                modelEngine.Invalidate(data.AccountId);
 
             // Several unique indexes exist. Treat the exception as idempotent success only if
-            // another transaction actually persisted this telemetry MessageId.
+            // another transaction actually persisted this transaction MessageId.
             await using var verificationDb = await contextFactory.CreateDbContextAsync(
                 stoppingToken
             );
             if (
-                await verificationDb.TelemetryReadings.AnyAsync(
+                await verificationDb.Transactions.AnyAsync(
                     r => r.MessageId == messageId,
                     stoppingToken
                 )
@@ -362,7 +362,7 @@ public class TelemetryConsumerWorker(
         catch
         {
             if (modelAdvanced)
-                modelEngine.Invalidate(data.EquipmentId);
+                modelEngine.Invalidate(data.AccountId);
             throw;
         }
 
@@ -376,19 +376,11 @@ public class TelemetryConsumerWorker(
         }
     }
 
-    private static string BuildPendingAnomalyPayload(TelemetryEnvelope data) =>
-        JsonSerializer.Serialize(
-            new TelemetryAlertEnvelope(
-                data.MessageId,
-                data.EquipmentId,
-                data.OccurredAt,
-                data.EngineTemperature,
-                Diagnostics: string.Empty
-            )
-        );
-
+    // Only deterministic validation failures reach the DLQ-before-commit path. Kafka,
+    // producer, and internal failures must never be classified here: that would delete
+    // the gateway's durable copy by committing past a retryable record.
     private static bool TryValidate(
-        TelemetryEnvelope? data,
+        TransactionEvent? data,
         out Guid messageId,
         out string reason
     )
@@ -397,7 +389,13 @@ public class TelemetryConsumerWorker(
 
         if (data is null)
         {
-            reason = "payload is not valid telemetry JSON";
+            reason = "payload is not valid transaction JSON";
+            return false;
+        }
+
+        if (data.SchemaVersion != 1)
+        {
+            reason = "SchemaVersion is not 1";
             return false;
         }
 
@@ -408,34 +406,37 @@ public class TelemetryConsumerWorker(
         }
 
         if (
-            string.IsNullOrWhiteSpace(data.EquipmentId)
-            || data.EquipmentId.Length > 64
-            || data.EquipmentId != data.EquipmentId.Trim()
-            || !data.EquipmentId.All(IsEquipmentIdCharacter)
+            string.IsNullOrWhiteSpace(data.AccountId)
+            || data.AccountId.Length > TransactionLimits.MaxAccountIdLength
+            || data.AccountId != data.AccountId.Trim()
+            || !data.AccountId.All(IsAccountIdCharacter)
         )
         {
-            reason = "EquipmentId is missing or too long";
+            reason = "AccountId is missing or too long";
             return false;
         }
 
-        if (data.SequenceNumber <= 0)
+        if (data.SequenceNumber <= 0 || data.SequenceNumber > TransactionLimits.MaxSequenceNumber)
         {
-            reason = "SequenceNumber is not positive";
+            reason = "SequenceNumber is out of range";
             return false;
         }
 
         if (data.OccurredAt == default || data.ReceivedAt == default)
         {
-            reason = "an event or cloud timestamp is missing";
+            reason = "an event or ingestion timestamp is missing";
             return false;
         }
 
-        if (
-            !IsSupportedMeasurement(data.EngineTemperature)
-            || !IsSupportedMeasurement(data.OilPressure)
-        )
+        if (data.AmountMinor <= 0 || data.AmountMinor > TransactionLimits.MaxAmountMinor)
         {
-            reason = "a measurement is non-finite or outside the detector's numeric range";
+            reason = "AmountMinor is out of range";
+            return false;
+        }
+
+        if (!TransactionCurrencies.IsSupported(data.Currency))
+        {
+            reason = "Currency is not supported";
             return false;
         }
 
@@ -443,16 +444,13 @@ public class TelemetryConsumerWorker(
         return true;
     }
 
-    internal static TelemetryEnvelope NormalizeTimestamps(TelemetryEnvelope data) =>
+    internal static TransactionEvent NormalizeTimestamps(TransactionEvent data) =>
         data with
         {
             OccurredAt = data.OccurredAt.ToUniversalTime(),
             ReceivedAt = data.ReceivedAt.ToUniversalTime(),
         };
 
-    private static bool IsSupportedMeasurement(double value) =>
-        double.IsFinite(value) && Math.Abs(value) <= float.MaxValue;
-
-    private static bool IsEquipmentIdCharacter(char value) =>
+    private static bool IsAccountIdCharacter(char value) =>
         char.IsAsciiLetterOrDigit(value) || value is '-' or '_' or '.' or ':';
 }

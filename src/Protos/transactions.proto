@@ -1,0 +1,64 @@
+syntax = "proto3";
+
+package txmonitoring.ingestion.v1;
+option csharp_namespace = "TxMonitoring.Ingestion.V1";
+
+import "google/protobuf/timestamp.proto";
+
+// Capture-gateway <-> ingestion API. This carries an *event feed* for monitoring;
+// in payments "capture" also means requesting settlement after an authorisation,
+// which this project never performs.
+service TransactionIngestion {
+  // Unary
+  rpc UploadTransactions (UploadTransactionsRequest) returns (IngestResponse);
+}
+
+// One message carries a whole batch of transactions, bounded by the server's
+// configured MaxReceiveMessageSize (default 4 MiB). Protobuf varints and bounded
+// strings vary in size, so capacity is proven by a worst-valid-batch size test,
+// not by fixed per-record byte arithmetic.
+message UploadTransactionsRequest {
+  repeated TransactionRecord transactions = 1;
+}
+
+// One monitored observation of a synthetic outbound debit attempt.
+// AmountMinor is integer minor units (e.g. cents); risk is computed downstream
+// and is never an input field.
+message TransactionRecord {
+  // UUID minted by the synthetic origin; the idempotency key end to end.
+  string message_id = 1;
+
+  // Opaque synthetic account key; the Kafka partition key downstream.
+  string account_id = 2;
+
+  // Monotonic per account within one generator run; resets on restart.
+  int64 sequence_number = 3;
+
+  // Origin event time, millisecond resolution.
+  google.protobuf.Timestamp occurred_at = 4;
+
+  // Attempted debit amount, positive integer minor units, bounded by policy.
+  int64 amount_minor = 5;
+
+  // Uppercase three-letter code; v1 accepts CAD only.
+  string currency = 6;
+
+  // W3C trace context, carried as a Kafka header after ingestion.
+  string traceparent = 7;
+}
+
+message IngestResponse {
+  // True only when every submitted record was classified accepted or permanently
+  // rejected. False when transient/internal/Kafka failures leave IDs unnamed and
+  // still in gateway custody. "Accepted" means Kafka acknowledged custody; it is
+  // never a payment approval or authorisation decision.
+  bool complete = 1;
+
+  repeated string accepted_message_ids = 2;
+
+  repeated string rejected_message_ids = 3;
+}
+
+// Field numbers are part of the wire contract. accepted_message_ids = 2 and
+// rejected_message_ids = 3 are frozen; the ingestion descriptor suite pins every
+// service, RPC, field number, cardinality, and scalar/message type.

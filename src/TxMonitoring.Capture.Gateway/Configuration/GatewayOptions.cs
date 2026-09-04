@@ -2,9 +2,9 @@ using System.ComponentModel.DataAnnotations;
 
 namespace TxMonitoring.Capture.Gateway.Configuration;
 
-public class CloudOptions
+public class IngestionOptions
 {
-    public const string Section = "Cloud";
+    public const string Section = "Ingestion";
 
     [Required(AllowEmptyStrings = false)]
     [Url]

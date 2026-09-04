@@ -10,17 +10,9 @@ using TxMonitoring.Capture.Gateway.Infrastructure;
 namespace TxMonitoring.Capture.Gateway.Features.Buffer;
 
 /// <summary>
-/// What the sensor sends the gateway
+/// Receives one transaction from the feed generator and durably buffers it.
+/// A 202 is the custody promise: the transaction is on local disk (WAL + FULL fsync).
 /// </summary>
-public record TelemetryDto(
-    string MessageId,
-    string EquipmentId,
-    long SequenceNumber,
-    DateTimeOffset OccurredAt, // event time
-    double EngineTemperature,
-    double OilPressure
-);
-
 public static class ReceiveTelemetryEndpoint
 {
     private const int MaxTraceParentLength = 128;
@@ -34,9 +26,9 @@ public static class ReceiveTelemetryEndpoint
             .CreateLogger(typeof(ReceiveTelemetryEndpoint).FullName!);
 
         app.MapPost(
-            "/api/local/telemetry",
+            "/api/local/transactions",
             async (
-                TelemetryDto req,
+                TransactionSubmission req,
                 EdgeDbContext db,
                 EdgeMetrics metrics,
                 BufferDepth bufferDepth,
@@ -45,7 +37,7 @@ public static class ReceiveTelemetryEndpoint
                 HttpContext http
             ) =>
             {
-                var validationError = TelemetryAdmissionValidator.Validate(
+                var validationError = TransactionAdmissionValidator.Validate(
                     req,
                     out var canonicalMessageId
                 );
@@ -66,11 +58,11 @@ public static class ReceiveTelemetryEndpoint
                             x => x.MessageId == canonicalMessageId,
                             http.RequestAborted
                         )
-                        || await db.TelemetryRecords.AnyAsync(
+                        || await db.BufferedTransactions.AnyAsync(
                             x => x.MessageId == canonicalMessageId,
                             http.RequestAborted
                         )
-                        || await db.QuarantinedTelemetryRecords.AnyAsync(
+                        || await db.QuarantinedTransactions.AnyAsync(
                             x => x.MessageId == canonicalMessageId,
                             http.RequestAborted
                         );
@@ -79,9 +71,9 @@ public static class ReceiveTelemetryEndpoint
                     {
                         metrics.Duplicates.Add(1);
                         logger.LogDebug(
-                            "Duplicate MessageId {MessageId} from {EquipmentId} ignored.",
+                            "Duplicate MessageId {MessageId} from {AccountId} ignored.",
                             canonicalMessageId,
-                            req.EquipmentId
+                            req.AccountId
                         );
                         return Results.Accepted();
                     }
@@ -97,10 +89,10 @@ public static class ReceiveTelemetryEndpoint
                         var retryAfter = Random.Shared.Next(2, 15);
 
                         logger.LogWarning(
-                            "Buffer full ({Depth}/{Max}). Shedding {EquipmentId}, retry in {RetryAfter}s.",
+                            "Buffer full ({Depth}/{Max}). Shedding {AccountId}, retry in {RetryAfter}s.",
                             bufferDepth.Current,
                             maxDepth,
-                            req.EquipmentId,
+                            req.AccountId,
                             retryAfter
                         );
 
@@ -115,31 +107,32 @@ public static class ReceiveTelemetryEndpoint
                     if (traceParent?.Length > MaxTraceParentLength)
                         traceParent = null;
 
-                    var record = new TelemetryRecord
+                    var record = new BufferedTransaction
                     {
                         MessageId = canonicalMessageId,
-                        EquipmentId = req.EquipmentId,
+                        AccountId = req.AccountId,
                         SequenceNumber = req.SequenceNumber,
-                        OccurredAt = req.OccurredAt,
+                        // Equivalent source offsets are not different data: store the instant in UTC.
+                        OccurredAt = req.OccurredAt.ToUniversalTime(),
                         BufferedAt = DateTimeOffset.UtcNow, // Never leaves the gateway.
                         TraceParent = traceParent,
-                        EngineTemperature = req.EngineTemperature,
-                        OilPressure = req.OilPressure,
+                        AmountMinor = req.AmountMinor,
+                        Currency = req.Currency,
                     };
 
-                    db.TelemetryRecords.Add(record);
+                    db.BufferedTransactions.Add(record);
 
                     try
                     {
                         // One SaveChanges == one transaction == one fsync (synchronous=FULL).
-                        // No CancellationToken on purpose: after reserving the reading, a lost HTTP
+                        // No CancellationToken on purpose: after reserving the transaction, a lost HTTP
                         // connection makes the result ambiguous and the durable write must finish.
                         await db.SaveChangesAsync();
 
                         metrics.Received.Add(1);
 
-                        // 202 means accepted but not finished: the reading is durable locally and
-                        // still has to reach the cloud.
+                        // 202 means accepted but not finished: the transaction is durable locally and
+                        // still has to reach ingestion.
                         return Results.Accepted();
                     }
                     catch (DbUpdateException ex) when (IsDuplicateMessageId(ex))
@@ -147,9 +140,9 @@ public static class ReceiveTelemetryEndpoint
                         bufferDepth.Release(1);
                         metrics.Duplicates.Add(1);
                         logger.LogDebug(
-                            "Duplicate MessageId {MessageId} from {EquipmentId} ignored.",
+                            "Duplicate MessageId {MessageId} from {AccountId} ignored.",
                             canonicalMessageId,
-                            req.EquipmentId
+                            req.AccountId
                         );
                         return Results.Accepted();
                     }
@@ -166,30 +159,30 @@ public static class ReceiveTelemetryEndpoint
             }
         );
 
-        // Same number as edge.queue.depth gauge, readable without Prometheus
+        // Same number as capture.queue.depth gauge, readable without Prometheus
         // Reports disk not cache
         app.MapGet(
             "/buffer",
             async (EdgeDbContext db) =>
                 // This is an anonymous type specifying a response body
-                Results.Ok(new { queueDepth = await db.TelemetryRecords.CountAsync() })
+                Results.Ok(new { queueDepth = await db.BufferedTransactions.CountAsync() })
         );
 
-        // A bounded forensic view of permanent cloud rejections. Limit is deliberately capped so
+        // A bounded forensic view of permanent ingestion rejections. Limit is deliberately capped so
         // an operator cannot make one request materialize the entire quarantine in memory.
         app.MapGet(
             "/buffer/quarantine",
             async (int? limit, EdgeDbContext db, CancellationToken cancellationToken) =>
             {
                 var take = Math.Clamp(limit ?? 100, 1, 200);
-                var total = await db.QuarantinedTelemetryRecords.CountAsync(cancellationToken);
+                var total = await db.QuarantinedTransactions.CountAsync(cancellationToken);
                 // SQLite's EF provider cannot translate DateTimeOffset ordering. Keep the limit
                 // parameterized in raw SQL, then shape at most 200 rows in memory.
                 var rows = await db
-                    .QuarantinedTelemetryRecords.FromSqlInterpolated(
+                    .QuarantinedTransactions.FromSqlInterpolated(
                         $"""
                         SELECT *
-                        FROM "QuarantinedTelemetryRecords"
+                        FROM "QuarantinedTransactions"
                         ORDER BY "RejectedAt" DESC, "MessageId" DESC
                         LIMIT {take}
                         """
@@ -201,13 +194,13 @@ public static class ReceiveTelemetryEndpoint
                     {
                         row.MessageId,
                         row.OriginalQueueId,
-                        row.EquipmentId,
+                        row.AccountId,
                         row.SequenceNumber,
                         row.OccurredAt,
                         row.BufferedAt,
                         row.TraceParent,
-                        row.EngineTemperature,
-                        row.OilPressure,
+                        row.AmountMinor,
+                        row.Currency,
                         row.RejectedAt,
                         row.RejectionCode,
                         row.RejectionReason,

@@ -18,6 +18,21 @@ public class KafkaOptions
     public int ReadinessTimeoutSeconds { get; set; }
 }
 
+public class GrpcOptions
+{
+    public const string Section = "Grpc";
+
+    public const int DefaultMaxReceiveMessageSizeBytes = 4_194_304;
+
+    /// <summary>
+    /// Server-side cap on one UploadTransactions call. The uploader's batch bound
+    /// stays below this; a worst-valid-batch size test proves the margin using the
+    /// same shared field limits instead of fixed per-record byte arithmetic.
+    /// </summary>
+    [Range(65_536, 67_108_864)]
+    public int MaxReceiveMessageSizeBytes { get; set; } = DefaultMaxReceiveMessageSizeBytes;
+}
+
 public sealed class TransportSecurityOptions : IValidatableObject
 {
     public const string Section = "TransportSecurity";

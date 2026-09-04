@@ -53,12 +53,6 @@ public sealed class WorkerMetrics : IDisposable
             description: "Readings the model flagged as anomalous."
         );
 
-        AiFailures = _meter.CreateCounter<long>(
-            "worker.ai.failures",
-            unit: "{call}",
-            description: "Gemini calls that failed or timed out, leaving the alert without advice."
-        );
-
         AlertFailures = _meter.CreateCounter<long>(
             "worker.alert.failures",
             unit: "{attempt}",
@@ -98,7 +92,6 @@ public sealed class WorkerMetrics : IDisposable
     public Counter<long> DeadLettersPublished { get; }
     public Counter<long> DeadLetterFailures { get; }
     public Counter<long> Anomalies { get; }
-    public Counter<long> AiFailures { get; }
     public Counter<long> AlertFailures { get; }
     public Counter<long> AlertsPublished { get; }
     public Histogram<double> Lag { get; }

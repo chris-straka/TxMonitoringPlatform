@@ -16,7 +16,7 @@ public sealed class AlertOutboxMessage
 {
     public Guid Id { get; set; } = Guid.CreateVersion7();
     public Guid MessageId { get; set; }
-    public string EquipmentId { get; set; } = string.Empty;
+    public string AccountId { get; set; } = string.Empty;
     public string Payload { get; set; } = string.Empty;
     public string? TraceParent { get; set; }
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;

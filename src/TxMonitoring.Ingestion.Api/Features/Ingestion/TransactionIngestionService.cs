@@ -10,94 +10,97 @@ using Grpc.Core;
 using Microsoft.Extensions.Options;
 
 using TxMonitoring.Ingestion.Api.Configuration;
+using TxMonitoring.Ingestion.V1;
 using TxMonitoring.Shared;
 
 namespace TxMonitoring.Ingestion.Api.Features.Ingestion;
 
 /// <summary>
-/// Accepts a batch of readings from an Edge Gateway and hands each one to Kafka.
+/// Accepts a batch of transactions from a capture gateway and hands each one to Kafka.
 /// </summary>
-public class TelemetryService(
+public class TransactionIngestionService(
     IProducer<string, string> kafkaProducer,
-    IValidator<TelemetryReading> validator,
+    IValidator<TransactionRecord> validator,
     IOptions<KafkaOptions> kafkaOptions,
-    ILogger<TelemetryService> logger
-) : TelemetryIngestion.TelemetryIngestionBase
+    ILogger<TransactionIngestionService> logger
+) : TransactionIngestion.TransactionIngestionBase
 {
-    private const int MaxBatchSize = 1_000;
     private readonly string _topic = kafkaOptions.Value.EventsTopic;
 
-    public override async Task<TelemetryResponse> UploadTelemetry(
-        UploadTelemetryRequest request,
+    public override async Task<IngestResponse> UploadTransactions(
+        UploadTransactionsRequest request,
         ServerCallContext context
     )
     {
-        if (request.Readings.Count > MaxBatchSize)
+        if (request.Transactions.Count > TransactionLimits.MaxBatchSize)
         {
             throw new RpcException(
                 new Status(
                     StatusCode.InvalidArgument,
-                    $"A batch cannot contain more than {MaxBatchSize} readings."
+                    $"A batch cannot contain more than {TransactionLimits.MaxBatchSize} transactions."
                 )
             );
         }
 
-        var accepted = new List<string>(request.Readings.Count);
+        var accepted = new List<string>(request.Transactions.Count);
         var rejected = new List<string>();
         var inflight = new List<(string MessageId, Task<DeliveryResult<string, string>> Delivery)>(
-            request.Readings.Count
+            request.Transactions.Count
         );
         var undelivered = 0;
         Exception? firstFailure = null;
 
-        foreach (var reading in request.Readings)
+        foreach (var record in request.Transactions)
         {
-            var validation = validator.Validate(reading);
+            var validation = validator.Validate(record);
 
             if (!validation.IsValid)
             {
                 logger.LogWarning(
-                    "Rejecting reading {MessageId} from {EquipmentId}: {Errors}.",
-                    reading.MessageId,
-                    reading.EquipmentId,
+                    "Rejecting transaction {MessageId} from {AccountId}: {Errors}.",
+                    record.MessageId,
+                    record.AccountId,
                     string.Join("; ", validation.Errors.Select(e => e.ErrorMessage))
                 );
 
-                rejected.Add(reading.MessageId);
+                rejected.Add(record.MessageId);
                 continue;
             }
 
             try
             {
-                var payload = new TelemetryEnvelope(
-                    reading.MessageId,
-                    reading.EquipmentId,
-                    reading.SequenceNumber,
-                    reading.OccurredAt.ToDateTimeOffset(),
+                var payload = new TransactionEvent(
+                    record.MessageId,
+                    record.AccountId,
+                    record.SequenceNumber,
+                    record.OccurredAt.ToDateTimeOffset(),
+                    // Delivery metadata, stamped once per publication attempt. A retry of the
+                    // same MessageId after a lost acknowledgement may stamp a later value;
+                    // the first durable Postgres row still wins.
                     DateTimeOffset.UtcNow,
-                    reading.EngineTemperature,
-                    reading.OilPressure
+                    record.AmountMinor,
+                    record.Currency
                 );
 
                 var kafkaMsg = new Message<string, string>
                 {
-                    Key = reading.EquipmentId,
-                    Value = JsonSerializer.Serialize(payload),
+                    Key = record.AccountId,
+                    Value = JsonSerializer.Serialize(payload, TransactionJson.Options),
                 };
 
-                // Without this there's no way to connect the sensor trace to the consumer's trace
-                if (!string.IsNullOrEmpty(reading.Traceparent))
+                // Without this there's no way to connect the generator trace to the consumer's trace
+                if (!string.IsNullOrEmpty(record.Traceparent))
                 {
                     kafkaMsg.Headers =
                     [
-                        new Header("traceparent", Encoding.UTF8.GetBytes(reading.Traceparent)),
+                        new Header("traceparent", Encoding.UTF8.GetBytes(record.Traceparent)),
                     ];
                 }
 
                 // Produce now, await later: librdkafka batches msgs into one broker request.
                 inflight.Add(
                     (
-                        reading.MessageId,
+                        record.MessageId,
                         kafkaProducer.ProduceAsync(_topic, kafkaMsg, context.CancellationToken)
                     )
                 );
@@ -109,14 +112,14 @@ public class TelemetryService(
             }
             catch (Exception ex)
             {
-                // Validation failures are permanent and are the only readings named as rejected.
+                // Validation failures are permanent and are the only records named as rejected.
                 // Producer failures are transient or internal: leaving this ID unnamed tells the
                 // gateway to retain it and retry instead of deleting the only durable copy.
                 logger.LogError(
                     ex,
-                    "Could not queue reading {MessageId} from {EquipmentId}; gateway will retry it.",
-                    reading.MessageId,
-                    reading.EquipmentId
+                    "Could not queue transaction {MessageId} from {AccountId}; gateway will retry it.",
+                    record.MessageId,
+                    record.AccountId
                 );
                 undelivered++;
                 firstFailure ??= ex;
@@ -157,14 +160,14 @@ public class TelemetryService(
             }
         }
 
-        // One line, because an outage fails all 200 and buries the log
+        // One line, because an outage fails all records and buries the log
         if (undelivered > 0)
         {
             logger.LogError(
                 firstFailure,
-                "{Undelivered} of {Sent} readings were not durably delivered. Gateway will re-send them.",
+                "{Undelivered} of {Sent} transactions were not durably delivered. Gateway will re-send them.",
                 undelivered,
-                request.Readings.Count
+                request.Transactions.Count
             );
         }
 
@@ -172,14 +175,15 @@ public class TelemetryService(
             "Batch: accepted {Accepted}, rejected {Rejected} of {Sent} (faulted: {Faulted}).",
             accepted.Count,
             rejected.Count,
-            request.Readings.Count,
+            request.Transactions.Count,
             undelivered > 0
         );
 
-        // Success means we reached the end of the batch, not that we took any of it
-        return new TelemetryResponse
+        // Complete means every ID was classified accepted or permanently rejected, not that
+        // the gateway's work is done: unnamed IDs stay in gateway custody for retry.
+        return new IngestResponse
         {
-            Success = undelivered == 0,
+            Complete = undelivered == 0,
             AcceptedMessageIds = { accepted },
             RejectedMessageIds = { rejected },
         };

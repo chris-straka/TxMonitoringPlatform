@@ -8,7 +8,7 @@ namespace TxMonitoring.Web.Tests;
 
 public sealed class KafkaTopicsHealthCheckTests
 {
-    private static readonly string[] Topics = ["telemetry-events", "telemetry-alerts"];
+    private static readonly string[] Topics = ["transaction-events", "risk-alerts"];
 
     [Fact]
     public void ReportsHealthyWhenEveryTopicHasAUsablePartition()

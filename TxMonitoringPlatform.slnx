@@ -13,5 +13,6 @@
         <Project Path="tests/TxMonitoring.Capture.Tests/TxMonitoring.Capture.Tests.csproj" />
         <Project Path="tests/TxMonitoring.Ingestion.Tests/TxMonitoring.Ingestion.Tests.csproj" />
         <Project Path="tests/TxMonitoring.Web.Tests/TxMonitoring.Web.Tests.csproj" />
+        <Project Path="tests/TxMonitoring.Feed.Tests/TxMonitoring.Feed.Tests.csproj" />
     </Folder>
 </Solution>

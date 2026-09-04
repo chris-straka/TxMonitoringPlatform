@@ -18,26 +18,27 @@ using TxMonitoring.Ingestion.Api.Infrastructure;
 using TxMonitoring.Shared;
 
 // --------------------------------------------------------------------------
-// The cloud end of the store-and-forward path.
+// The ingestion end of the store-and-forward path.
 //
-//   ┌──────────────┐   200 readings, one call ┌───────────────┐
-//   │ edge-gateway │ ────── gRPC:8081 ──────► │ ingestion-api │
-//   │              │ ◄──── MessageIds ─────── │               │
-//   └──────────────┘                          └───────┬───────┘
-//                          one message per reading    │
-//                                key = EquipmentId    ▼
-//                                        ┌─────────────────────────┐
-//                                        │ Kafka  telemetry-events │
-//                                        └─────────────────────────┘
+//   ┌─────────────────┐  bounded batch, one call ┌───────────────┐
+//   │ capture-gateway │ ────── gRPC:8081 ──────► │ ingestion-api │
+//   │                 │ ◄──── MessageIds ─────── │               │
+//   └─────────────────┘                          └───────┬───────┘
+//                         one message per transaction    │
+//                                key = AccountId         ▼
+//                                        ┌──────────────────────────┐
+//                                        │ Kafka transaction-events │
+//                                        └──────────────────────────┘
 //
-// Keying by EquipmentId puts a machine's readings on one kafka partition.
+// Keying by AccountId puts an account's transactions on one kafka partition.
 // The reply sorts every id the gateway sent into:
 //
 //   accepted   the broker acknowledged the write
 //   rejected   this service's validator refused it, so Kafka never saw it
 //   neither    still the gateway's, and it sends it again
 //
-// POST /api/debug/telemetry is a debugging door onto the same topic.
+// There is exactly one ingestion path: deterministic scenarios enter through the
+// feed and gateway, which keeps the custody claim testable.
 // --------------------------------------------------------------------------
 
 var builder = WebApplication.CreateBuilder(args);
@@ -58,9 +59,15 @@ builder
     .Bind(builder.Configuration.GetSection(TransportSecurityOptions.Section))
     .ValidateDataAnnotations()
     .ValidateOnStart();
+builder
+    .Services.AddOptions<GrpcOptions>()
+    .Bind(builder.Configuration.GetSection(GrpcOptions.Section))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
 
 var otel = builder.Configuration.GetSection(OTelOptions.Section).Get<OTelOptions>()!;
 var kafka = builder.Configuration.GetSection(KafkaOptions.Section).Get<KafkaOptions>()!;
+var grpc = builder.Configuration.GetSection(GrpcOptions.Section).Get<GrpcOptions>()!;
 var transportSecurity =
     builder.Configuration.GetSection(TransportSecurityOptions.Section)
         .Get<TransportSecurityOptions>() ?? new TransportSecurityOptions();
@@ -108,11 +115,11 @@ builder
             .AddOtlpExporter(opt => opt.Endpoint = new Uri(otel.Endpoint))
     );
 
-builder.Services.AddValidatorsFromAssemblyContaining<TelemetryValidator>();
+builder.Services.AddValidatorsFromAssemblyContaining<TransactionRecordValidator>();
 
-// Gateway's batch (200 readings) != Kafka's batches
-// One batch of 200 readings -> 200 kafka msgs (if none rejected)
-// Each kafka msg is key -> EquipmentId, value -> JSON envelope
+// Gateway's batch (bounded by MaxBatchSize) != Kafka's batches
+// One batch of N transactions -> N kafka msgs (if none rejected)
+// Each kafka msg is key -> AccountId, value -> JSON event
 // These they get batched per partition into record batches
 
 // Setup Kafka
@@ -163,17 +170,19 @@ builder
         timeout: TimeSpan.FromSeconds(KafkaOptions.MaximumReadinessTimeoutSeconds + 1)
     );
 
-builder.Services.AddGrpc();
+builder.Services.AddGrpc(options =>
+{
+    options.MaxReceiveMessageSize = grpc.MaxReceiveMessageSizeBytes;
+});
 builder.Services.AddOpenApi();
 var app = builder.Build();
 
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
-    app.MapDebugTelemetryEndpoint();
 }
 
-app.MapGrpcService<TelemetryService>();
+app.MapGrpcService<TransactionIngestionService>();
 app.MapGet("/health", () => Results.Ok());
 app.MapHealthChecks(
     "/health/ready",

@@ -111,7 +111,7 @@ builder.Services.AddHostedService<KafkaSignalRWorker>();
 var app = builder.Build();
 
 app.UseCors();
-app.MapHub<TelemetryHub>("/telemetryHub");
+app.MapHub<RiskHub>("/riskHub");
 app.MapGet("/health", () => Results.Ok());
 app.MapHealthChecks(
     "/health/ready",
@@ -123,18 +123,18 @@ app.MapHealthChecks(
 
 app.Run();
 
-public interface ITelemetryClient
+public interface IRiskClient
 {
     // These method names must match what the Frontend listens for
-    Task telemetry_events(string payload);
-    Task telemetry_alerts(string payload);
+    Task transaction_events(string payload);
+    Task risk_alerts(string payload);
 }
 
-public class TelemetryHub : Hub<ITelemetryClient> { }
+public class RiskHub : Hub<IRiskClient> { }
 
 public class KafkaSignalRWorker(
     IOptions<KafkaOptions> kafkaOptions,
-    IHubContext<TelemetryHub, ITelemetryClient> hubContext,
+    IHubContext<RiskHub, IRiskClient> hubContext,
     KafkaConsumerReadiness readiness,
     WebMetrics metrics,
     ILogger<KafkaSignalRWorker> logger
@@ -185,7 +185,7 @@ public class KafkaSignalRWorker(
                         continue;
 
                     activity = WebTracing.Source.StartActivity(
-                        "telemetry.relay",
+                        "transaction.relay",
                         ActivityKind.Consumer,
                         ReadTraceContext(result.Message.Headers),
                         tags:
@@ -199,11 +199,11 @@ public class KafkaSignalRWorker(
                     // Use the Topic name to decide which method to call
                     if (result.Topic == kafka.EventsTopic)
                     {
-                        await hubContext.Clients.All.telemetry_events(result.Message.Value);
+                        await hubContext.Clients.All.transaction_events(result.Message.Value);
                     }
                     else if (result.Topic == kafka.AlertsTopic)
                     {
-                        await hubContext.Clients.All.telemetry_alerts(result.Message.Value);
+                        await hubContext.Clients.All.risk_alerts(result.Message.Value);
                     }
 
                     metrics.RecordRelayed(result.Topic);

@@ -10,7 +10,7 @@ using TxMonitoring.Detection.Worker.Infrastructure.Data;
 namespace TxMonitoring.Detection.Worker.Infrastructure;
 
 /// <summary>Tracks whether the source consumer currently owns at least one partition.</summary>
-public sealed class DiagnosticsConsumerReadiness : IHealthCheck
+public sealed class DetectionConsumerReadiness : IHealthCheck
 {
     private int _assignedPartitions;
 
@@ -34,7 +34,7 @@ public sealed class DiagnosticsConsumerReadiness : IHealthCheck
 }
 
 /// <summary>Checks all Kafka topics the diagnostics process must read or write.</summary>
-public sealed class DiagnosticsKafkaReadinessCheck(
+public sealed class DetectionKafkaReadinessCheck(
     IAdminClient adminClient,
     IOptions<KafkaOptions> options
 ) : IHealthCheck
@@ -100,7 +100,7 @@ public sealed class DiagnosticsKafkaReadinessCheck(
 }
 
 /// <summary>Requires a reachable Postgres database with the current EF migration set applied.</summary>
-public sealed class DiagnosticsDatabaseReadinessCheck(
+public sealed class DetectionDatabaseReadinessCheck(
     IDbContextFactory<AppDbContext> contextFactory
 ) : IHealthCheck
 {

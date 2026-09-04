@@ -19,9 +19,9 @@ public sealed class BufferSettlementStoreTests
         await using var db = new EdgeDbContext(dbOptions);
         await db.Database.EnsureCreatedAsync();
 
-        var accepted = Reading("EQ-accepted", sequence: 10);
-        var rejected = Reading("EQ-rejected", sequence: 20);
-        db.TelemetryRecords.AddRange(accepted, rejected);
+        var accepted = Reading("ACCT-accepted", sequence: 10);
+        var rejected = Reading("ACCT-rejected", sequence: 20);
+        db.BufferedTransactions.AddRange(accepted, rejected);
         await db.SaveChangesAsync();
 
         var depth = new BufferDepth();
@@ -35,21 +35,21 @@ public sealed class BufferSettlementStoreTests
             CancellationToken.None
         );
 
-        Assert.Equal(0, await db.TelemetryRecords.CountAsync());
+        Assert.Equal(0, await db.BufferedTransactions.CountAsync());
         Assert.Equal(2, await db.SettledMessages.CountAsync());
         Assert.Equal(0, depth.Current);
 
-        var quarantined = await db.QuarantinedTelemetryRecords.SingleAsync();
+        var quarantined = await db.QuarantinedTransactions.SingleAsync();
         Assert.Equal(rejected.MessageId, quarantined.MessageId);
         Assert.Equal(rejected.Id, quarantined.OriginalQueueId);
-        Assert.Equal(rejected.EquipmentId, quarantined.EquipmentId);
+        Assert.Equal(rejected.AccountId, quarantined.AccountId);
         Assert.Equal(rejected.SequenceNumber, quarantined.SequenceNumber);
         Assert.Equal(rejected.OccurredAt, quarantined.OccurredAt);
         Assert.Equal(rejected.BufferedAt, quarantined.BufferedAt);
         Assert.Equal(rejected.TraceParent, quarantined.TraceParent);
-        Assert.Equal(rejected.EngineTemperature, quarantined.EngineTemperature);
-        Assert.Equal(rejected.OilPressure, quarantined.OilPressure);
-        Assert.Equal(BufferSettlementStore.CloudRejectionCode, quarantined.RejectionCode);
+        Assert.Equal(rejected.AmountMinor, quarantined.AmountMinor);
+        Assert.Equal(rejected.Currency, quarantined.Currency);
+        Assert.Equal(BufferSettlementStore.IngestionRejectionCode, quarantined.RejectionCode);
         Assert.Contains("does not provide a per-reading reason", quarantined.RejectionReason);
     }
 
@@ -63,10 +63,10 @@ public sealed class BufferSettlementStoreTests
         await using var db = new EdgeDbContext(dbOptions);
         await db.Database.EnsureCreatedAsync();
 
-        var expired = Quarantined(Reading("EQ-old", sequence: 1), DateTimeOffset.UtcNow.AddDays(-2));
-        var rejected = Enumerable.Range(2, 3).Select(i => Reading("EQ-new", i)).ToList();
-        db.QuarantinedTelemetryRecords.Add(expired);
-        db.TelemetryRecords.AddRange(rejected);
+        var expired = Quarantined(Reading("ACCT-old", sequence: 1), DateTimeOffset.UtcNow.AddDays(-2));
+        var rejected = Enumerable.Range(2, 3).Select(i => Reading("ACCT-new", i)).ToList();
+        db.QuarantinedTransactions.Add(expired);
+        db.BufferedTransactions.AddRange(rejected);
         await db.SaveChangesAsync();
 
         var depth = new BufferDepth();
@@ -81,9 +81,9 @@ public sealed class BufferSettlementStoreTests
         );
 
         Assert.False(
-            await db.QuarantinedTelemetryRecords.AnyAsync(row => row.MessageId == expired.MessageId)
+            await db.QuarantinedTransactions.AnyAsync(row => row.MessageId == expired.MessageId)
         );
-        Assert.Equal(2, await db.QuarantinedTelemetryRecords.CountAsync());
+        Assert.Equal(2, await db.QuarantinedTransactions.CountAsync());
         Assert.Equal(0, depth.Current);
     }
 
@@ -97,10 +97,10 @@ public sealed class BufferSettlementStoreTests
         await using var db = new EdgeDbContext(dbOptions);
         await db.Database.EnsureCreatedAsync();
 
-        var rejected = Reading("EQ-readmitted", sequence: 3);
+        var rejected = Reading("ACCT-readmitted", sequence: 3);
         var firstRejectedAt = DateTimeOffset.UtcNow.AddHours(-1);
-        db.TelemetryRecords.Add(rejected);
-        db.QuarantinedTelemetryRecords.Add(Quarantined(rejected, firstRejectedAt));
+        db.BufferedTransactions.Add(rejected);
+        db.QuarantinedTransactions.Add(Quarantined(rejected, firstRejectedAt));
         await db.SaveChangesAsync();
 
         var depth = new BufferDepth();
@@ -110,9 +110,9 @@ public sealed class BufferSettlementStoreTests
 
         await store.SettleAsync([rejected], [rejected.MessageId], CancellationToken.None);
 
-        Assert.Empty(await db.TelemetryRecords.ToListAsync());
+        Assert.Empty(await db.BufferedTransactions.ToListAsync());
         Assert.Single(await db.SettledMessages.ToListAsync());
-        var quarantined = await db.QuarantinedTelemetryRecords.SingleAsync();
+        var quarantined = await db.QuarantinedTransactions.SingleAsync();
         Assert.Equal(rejected.MessageId, quarantined.MessageId);
         Assert.Equal(firstRejectedAt, quarantined.RejectedAt);
         Assert.Equal(0, depth.Current);
@@ -128,8 +128,8 @@ public sealed class BufferSettlementStoreTests
         await using var db = new EdgeDbContext(dbOptions);
         await db.Database.EnsureCreatedAsync();
 
-        var rejected = Reading("EQ-conflict", sequence: 1);
-        db.TelemetryRecords.Add(rejected);
+        var rejected = Reading("ACCT-conflict", sequence: 1);
+        db.BufferedTransactions.Add(rejected);
         db.SettledMessages.Add(
             new SettledMessage
             {
@@ -140,7 +140,7 @@ public sealed class BufferSettlementStoreTests
         await db.SaveChangesAsync();
         db.ChangeTracker.Clear();
 
-        var trackedReading = await db.TelemetryRecords.SingleAsync();
+        var trackedReading = await db.BufferedTransactions.SingleAsync();
         var depth = new BufferDepth();
         depth.Initialize(1);
         using var gate = new BufferMutationGate();
@@ -155,8 +155,8 @@ public sealed class BufferSettlementStoreTests
         );
 
         await using var verificationDb = new EdgeDbContext(dbOptions);
-        Assert.Equal(1, await verificationDb.TelemetryRecords.CountAsync());
-        Assert.Equal(0, await verificationDb.QuarantinedTelemetryRecords.CountAsync());
+        Assert.Equal(1, await verificationDb.BufferedTransactions.CountAsync());
+        Assert.Equal(0, await verificationDb.QuarantinedTransactions.CountAsync());
         Assert.Equal(1, depth.Current);
     }
 
@@ -189,36 +189,36 @@ public sealed class BufferSettlementStoreTests
         return connection;
     }
 
-    private static TelemetryRecord Reading(string equipmentId, long sequence) =>
+    private static BufferedTransaction Reading(string accountId, long sequence) =>
         new()
         {
             MessageId = Guid.CreateVersion7().ToString("D"),
-            EquipmentId = equipmentId,
+            AccountId = accountId,
             SequenceNumber = sequence,
             OccurredAt = DateTimeOffset.UtcNow.AddSeconds(-2),
             BufferedAt = DateTimeOffset.UtcNow.AddSeconds(-1),
             TraceParent = "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01",
-            EngineTemperature = 91.2,
-            OilPressure = 44.8,
+            AmountMinor = 2_500,
+            Currency = "CAD",
         };
 
-    private static QuarantinedTelemetryRecord Quarantined(
-        TelemetryRecord reading,
+    private static QuarantinedTransaction Quarantined(
+        BufferedTransaction reading,
         DateTimeOffset rejectedAt
     ) =>
         new()
         {
             MessageId = reading.MessageId,
             OriginalQueueId = reading.Id,
-            EquipmentId = reading.EquipmentId,
+            AccountId = reading.AccountId,
             SequenceNumber = reading.SequenceNumber,
             OccurredAt = reading.OccurredAt,
             BufferedAt = reading.BufferedAt,
             TraceParent = reading.TraceParent,
-            EngineTemperature = reading.EngineTemperature,
-            OilPressure = reading.OilPressure,
+            AmountMinor = reading.AmountMinor,
+            Currency = reading.Currency,
             RejectedAt = rejectedAt,
-            RejectionCode = BufferSettlementStore.CloudRejectionCode,
-            RejectionReason = BufferSettlementStore.CloudRejectionReason,
+            RejectionCode = BufferSettlementStore.IngestionRejectionCode,
+            RejectionReason = BufferSettlementStore.IngestionRejectionReason,
         };
 }

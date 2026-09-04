@@ -7,6 +7,10 @@ namespace TxMonitoring.Capture.Gateway.Features.Buffer;
 /// <summary>
 /// Adds backwards-compatible tables that EnsureCreated cannot add to an existing SQLite buffer.
 /// </summary>
+/// <remarks>
+/// This creates the target transaction schema only. An industrial-era buffer file is not
+/// migrated: the port starts with fresh volumes, and old tables are never renamed in place.
+/// </remarks>
 public static class EdgeDatabaseInitializer
 {
     public static async Task EnsureCompatibleSchemaAsync(
@@ -15,6 +19,29 @@ public static class EdgeDatabaseInitializer
         CancellationToken cancellationToken = default
     )
     {
+        await db.Database.ExecuteSqlRawAsync(
+            """
+            CREATE TABLE IF NOT EXISTS "BufferedTransactions" (
+                "Id" INTEGER NOT NULL CONSTRAINT "PK_BufferedTransactions" PRIMARY KEY AUTOINCREMENT,
+                "MessageId" TEXT NOT NULL,
+                "AccountId" TEXT NOT NULL,
+                "SequenceNumber" INTEGER NOT NULL,
+                "OccurredAt" TEXT NOT NULL,
+                "BufferedAt" TEXT NOT NULL,
+                "TraceParent" TEXT NULL,
+                "AmountMinor" INTEGER NOT NULL,
+                "Currency" TEXT NOT NULL
+            );
+            """,
+            cancellationToken
+        );
+        await db.Database.ExecuteSqlRawAsync(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS "IX_BufferedTransactions_MessageId"
+            ON "BufferedTransactions" ("MessageId");
+            """,
+            cancellationToken
+        );
         await db.Database.ExecuteSqlRawAsync(
             """
             CREATE TABLE IF NOT EXISTS "SettledMessages" (
@@ -33,16 +60,16 @@ public static class EdgeDatabaseInitializer
         );
         await db.Database.ExecuteSqlRawAsync(
             """
-            CREATE TABLE IF NOT EXISTS "QuarantinedTelemetryRecords" (
-                "MessageId" TEXT NOT NULL CONSTRAINT "PK_QuarantinedTelemetryRecords" PRIMARY KEY,
+            CREATE TABLE IF NOT EXISTS "QuarantinedTransactions" (
+                "MessageId" TEXT NOT NULL CONSTRAINT "PK_QuarantinedTransactions" PRIMARY KEY,
                 "OriginalQueueId" INTEGER NOT NULL,
-                "EquipmentId" TEXT NOT NULL,
+                "AccountId" TEXT NOT NULL,
                 "SequenceNumber" INTEGER NOT NULL,
                 "OccurredAt" TEXT NOT NULL,
                 "BufferedAt" TEXT NOT NULL,
                 "TraceParent" TEXT NULL,
-                "EngineTemperature" REAL NOT NULL,
-                "OilPressure" REAL NOT NULL,
+                "AmountMinor" INTEGER NOT NULL,
+                "Currency" TEXT NOT NULL,
                 "RejectedAt" TEXT NOT NULL,
                 "RejectionCode" TEXT NOT NULL,
                 "RejectionReason" TEXT NOT NULL
@@ -52,8 +79,8 @@ public static class EdgeDatabaseInitializer
         );
         await db.Database.ExecuteSqlRawAsync(
             """
-            CREATE INDEX IF NOT EXISTS "IX_QuarantinedTelemetryRecords_RejectedAt"
-            ON "QuarantinedTelemetryRecords" ("RejectedAt");
+            CREATE INDEX IF NOT EXISTS "IX_QuarantinedTransactions_RejectedAt"
+            ON "QuarantinedTransactions" ("RejectedAt");
             """,
             cancellationToken
         );
@@ -65,17 +92,17 @@ public static class EdgeDatabaseInitializer
         );
         await db.Database.ExecuteSqlInterpolatedAsync(
             $"""
-            DELETE FROM "QuarantinedTelemetryRecords"
+            DELETE FROM "QuarantinedTransactions"
             WHERE "RejectedAt" < {quarantineCutoff};
             """,
             cancellationToken
         );
         await db.Database.ExecuteSqlInterpolatedAsync(
             $"""
-            DELETE FROM "QuarantinedTelemetryRecords"
+            DELETE FROM "QuarantinedTransactions"
             WHERE "MessageId" IN (
                 SELECT "MessageId"
-                FROM "QuarantinedTelemetryRecords"
+                FROM "QuarantinedTransactions"
                 ORDER BY "RejectedAt" DESC, "MessageId" DESC
                 LIMIT -1 OFFSET {bufferOptions.QuarantineMaxRows}
             );

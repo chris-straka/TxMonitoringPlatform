@@ -26,7 +26,7 @@ public sealed class AppDbContextDesignFactory : IDesignTimeDbContextFactory<AppD
             .AddEnvironmentVariables()
             .Build();
 
-        var connectionString = configuration.GetConnectionString("IndustrialDb");
+        var connectionString = configuration.GetConnectionString("TxMonitoringDb");
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
         var options = new DbContextOptionsBuilder<AppDbContext>()

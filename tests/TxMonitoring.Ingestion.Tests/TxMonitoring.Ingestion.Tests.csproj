@@ -12,7 +12,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../../src/TxMonitoring.Ingestion.Api/TxMonitoring.Ingestion.Api.csproj" />
-    <None Include="../../src/Protos/telemetry.proto" Link="telemetry.proto" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../../src/Protos/transactions.proto" Link="transactions.proto" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

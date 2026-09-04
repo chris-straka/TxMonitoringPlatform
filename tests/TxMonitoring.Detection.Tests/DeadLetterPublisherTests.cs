@@ -44,9 +44,9 @@ public sealed class DeadLetterPublisherTests
 
         await publisher.PublishAsync(source, reason, CancellationToken.None);
 
-        Assert.Equal("telemetry-events-dlq", transport.Topic);
+        Assert.Equal("transaction-events-dlq", transport.Topic);
         Assert.NotNull(transport.Message);
-        Assert.Equal("telemetry-events:3:42", transport.Message.Key);
+        Assert.Equal("transaction-events:3:42", transport.Message.Key);
         Assert.Equal(
             "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
             Encoding.UTF8.GetString(transport.Message.Headers.GetLastBytes("traceparent"))
@@ -58,7 +58,7 @@ public sealed class DeadLetterPublisherTests
         );
         Assert.NotNull(envelope);
         Assert.Equal(1, envelope.SchemaVersion);
-        Assert.Equal("telemetry-events:3:42", envelope.SourceIdentity);
+        Assert.Equal("transaction-events:3:42", envelope.SourceIdentity);
         Assert.InRange(
             (timestamp - envelope.SourceTimestamp!.Value.UtcDateTime).Duration(),
             TimeSpan.Zero,
@@ -134,7 +134,7 @@ public sealed class DeadLetterPublisherTests
     ) =>
         new()
         {
-            Topic = "telemetry-events",
+            Topic = "transaction-events",
             Partition = new Partition(3),
             Offset = new Offset(42),
             Message = new Message<string, string>
@@ -150,10 +150,10 @@ public sealed class DeadLetterPublisherTests
         new()
         {
             BootstrapServers = "localhost:9094",
-            GroupId = "diagnostics-tests",
-            EventsTopic = "telemetry-events",
-            AlertsTopic = "telemetry-alerts",
-            DeadLetterTopic = "telemetry-events-dlq",
+            GroupId = "detection-tests",
+            EventsTopic = "transaction-events",
+            AlertsTopic = "risk-alerts",
+            DeadLetterTopic = "transaction-events-dlq",
             ReadinessTimeoutSeconds = 3,
         };
 

@@ -4,8 +4,12 @@ using System.Threading.Channels;
 namespace TxMonitoring.Feed.Emulator.Infrastructure;
 
 /// <summary>
-/// The emulator's OpenTelemetry instruments.
+/// The generator's OpenTelemetry instruments.
 /// </summary>
+/// <remarks>
+/// Instrument names keep the legacy sensor.telemetry.* vocabulary until the observability
+/// port renames them alongside the Grafana panels and Prometheus rules that pin them.
+/// </remarks>
 /// <remarks>
 /// Instruments are only read at export time, so anything in between has to survive
 /// The tallies are Counters because a running total carries that gap, a Gauge does not
@@ -13,14 +17,14 @@ namespace TxMonitoring.Feed.Emulator.Infrastructure;
 /// Depth is a Gauge, since the question is how full the channel is right now
 /// An UpDownCounter needs a matching -1 per dequeue, and one miss stays wrong forever
 /// </remarks>
-public sealed class SensorMetrics : IDisposable
+public sealed class FeedMetrics : IDisposable
 {
     public const string MeterName = "TxMonitoring.Feed.Emulator";
 
     private readonly Meter _meter;
     private readonly Histogram<double> _deliveryDuration;
 
-    public SensorMetrics(Channel<TelemetryDto> channel)
+    public FeedMetrics(Channel<TransactionSubmission> channel)
     {
         _meter = new Meter(MeterName);
 
@@ -89,8 +93,8 @@ public sealed class SensorMetrics : IDisposable
         );
 
     // The metrics registry holds a reference to every live Meter
-    // So _meter outlives SensorMetrics and keeps reporting
+    // So _meter outlives FeedMetrics and keeps reporting
     // The registry doesn't know when a meter should stop reporting
-    // SensorMetrics does (its own lifetime), so it should dispose of it
+    // FeedMetrics does (its own lifetime), so it should dispose of it
     public void Dispose() => _meter.Dispose();
 }

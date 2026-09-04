@@ -15,11 +15,11 @@ public sealed class BufferSettlementStore(
     IOptions<BufferOptions> bufferOptions
 )
 {
-    public const string CloudRejectionCode = "cloud_permanent_rejection";
+    public const string IngestionRejectionCode = "ingestion_permanent_rejection";
 
-    // UploadTelemetryResponse carries rejected IDs but no per-reading reason or error code. Store
-    // that limitation explicitly instead of inventing a diagnosis that the edge cannot know.
-    public const string CloudRejectionReason =
+    // IngestResponse carries rejected IDs but no per-reading reason or error code. Store
+    // that limitation explicitly instead of inventing a diagnosis that the gateway cannot know.
+    public const string IngestionRejectionReason =
         "Ingestion named this MessageId as permanently rejected; the current protocol does not provide a per-reading reason.";
 
     private readonly TimeSpan _settledIdRetention = TimeSpan.FromHours(
@@ -31,7 +31,7 @@ public sealed class BufferSettlementStore(
     private readonly int _quarantineMaxRows = bufferOptions.Value.QuarantineMaxRows;
 
     public async Task SettleAsync(
-        IReadOnlyCollection<TelemetryRecord> settledRows,
+        IReadOnlyCollection<BufferedTransaction> settledRows,
         IReadOnlyCollection<string> rejectedIds,
         CancellationToken cancellationToken
     )
@@ -60,7 +60,7 @@ public sealed class BufferSettlementStore(
             var rejectedRows = settledRows.Where(row => rejected.Contains(row.MessageId)).ToList();
             HashSet<string> alreadyQuarantinedIds = rejectedRows.Count == 0
                 ? []
-                : (await db.QuarantinedTelemetryRecords
+                : (await db.QuarantinedTransactions
                     .Where(row => rejected.Contains(row.MessageId))
                     .Select(row => row.MessageId)
                     .ToListAsync(cancellationToken))
@@ -73,29 +73,29 @@ public sealed class BufferSettlementStore(
                     SettledAt = settledAt,
                 })
             );
-            db.QuarantinedTelemetryRecords.AddRange(
+            db.QuarantinedTransactions.AddRange(
                 rejectedRows
                     // Older versions could re-admit an ID after its settled marker expired while
                     // its longer-lived quarantine row remained. Preserve the first forensic copy
                     // and still let that already-queued duplicate settle instead of wedging here.
                     .Where(row => !alreadyQuarantinedIds.Contains(row.MessageId))
-                    .Select(row => new QuarantinedTelemetryRecord
+                    .Select(row => new QuarantinedTransaction
                     {
                         MessageId = row.MessageId,
                         OriginalQueueId = row.Id,
-                        EquipmentId = row.EquipmentId,
+                        AccountId = row.AccountId,
                         SequenceNumber = row.SequenceNumber,
                         OccurredAt = row.OccurredAt,
                         BufferedAt = row.BufferedAt,
                         TraceParent = row.TraceParent,
-                        EngineTemperature = row.EngineTemperature,
-                        OilPressure = row.OilPressure,
+                        AmountMinor = row.AmountMinor,
+                        Currency = row.Currency,
                         RejectedAt = settledAt,
-                        RejectionCode = CloudRejectionCode,
-                        RejectionReason = CloudRejectionReason,
+                        RejectionCode = IngestionRejectionCode,
+                        RejectionReason = IngestionRejectionReason,
                     })
             );
-            db.TelemetryRecords.RemoveRange(settledRows);
+            db.BufferedTransactions.RemoveRange(settledRows);
             await db.SaveChangesAsync(cancellationToken);
 
             var settledCutoff = settledAt - _settledIdRetention;
@@ -112,7 +112,7 @@ public sealed class BufferSettlementStore(
             var quarantineCutoff = settledAt - _quarantineRetention;
             await db.Database.ExecuteSqlInterpolatedAsync(
                 $"""
-                DELETE FROM "QuarantinedTelemetryRecords"
+                DELETE FROM "QuarantinedTransactions"
                 WHERE "RejectedAt" < {quarantineCutoff};
                 """,
                 cancellationToken
@@ -120,7 +120,7 @@ public sealed class BufferSettlementStore(
 
             // The time bound controls usefulness; this hard count bound controls disk growth even
             // during a sustained rejection storm. SQLite reuses the pages released by this delete.
-            var quarantineCount = await db.QuarantinedTelemetryRecords.CountAsync(
+            var quarantineCount = await db.QuarantinedTransactions.CountAsync(
                 cancellationToken
             );
             var excessRows = quarantineCount - _quarantineMaxRows;
@@ -128,10 +128,10 @@ public sealed class BufferSettlementStore(
             {
                 await db.Database.ExecuteSqlInterpolatedAsync(
                     $"""
-                    DELETE FROM "QuarantinedTelemetryRecords"
+                    DELETE FROM "QuarantinedTransactions"
                     WHERE "MessageId" IN (
                         SELECT "MessageId"
-                        FROM "QuarantinedTelemetryRecords"
+                        FROM "QuarantinedTransactions"
                         ORDER BY "RejectedAt", "MessageId"
                         LIMIT {excessRows}
                     );

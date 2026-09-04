@@ -41,8 +41,8 @@ services:
       - ASPNETCORE_ENVIRONMENT=Development
       - Kafka__BootstrapServers=kafka:9092
       - Kafka__GroupId=web-api-dashboard-group
-      - Kafka__EventsTopic=telemetry-events
-      - Kafka__AlertsTopic=telemetry-alerts
+      - Kafka__EventsTopic=transaction-events
+      - Kafka__AlertsTopic=risk-alerts
       - Kafka__ReadinessTimeoutSeconds=3
       - OTel__ServiceName=TxMonitoring.Web.Api
       - OTel__Endpoint=http://otel-collector:4317
@@ -71,7 +71,7 @@ services:
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
       - Kafka__BootstrapServers=kafka:9092
-      - Kafka__EventsTopic=telemetry-events
+      - Kafka__EventsTopic=transaction-events
       - Kafka__ReadinessTimeoutSeconds=3
       - Kestrel__Endpoints__Grpc__Url=https://+:8081
       - Kestrel__Endpoints__Grpc__Certificate__Path=/tls/server.pfx
@@ -93,15 +93,15 @@ services:
       retries: 6
       start_period: 10s
 
-  # Sits between sensors and cloud
+  # Sits between the feed generator and ingestion
   #
-  #  docker compose stop ingestion-api    # cloud dies; queue depth starts climbing
-  #  docker compose restart edge-gateway  # gateway dies too; buffer survives on the volume
-  #  docker compose start ingestion-api   # cloud returns; queue drains oldest-first
+  #  docker compose stop ingestion-api      # ingestion dies; queue depth starts climbing
+  #  docker compose restart capture-gateway # gateway dies too; buffer survives on the volume
+  #  docker compose start ingestion-api     # ingestion returns; queue drains oldest-first
   #
   # then quiesce and audit the drained pipeline for duplicate IDs and observed gaps (make verify).
-  edge-gateway:
-    image: edge-gateway
+  capture-gateway:
+    image: capture-gateway
     build:
       context: .
       dockerfile: src/TxMonitoring.Capture.Gateway/Dockerfile
@@ -113,7 +113,7 @@ services:
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
       # Points at the ingestion API's HTTP/2 port, not its REST port.
-      - Cloud__ApiUrl=https://ingestion-api:8081
+      - Ingestion__ApiUrl=https://ingestion-api:8081
       - TransportSecurity__Enabled=true
       - TransportSecurity__ClientCertificatePath=/tls/client.pfx
       - TransportSecurity__ClientCertificatePassword=
@@ -143,14 +143,14 @@ services:
       retries: 3
       start_period: 5s
 
-  diagnostics-worker:
-    image: diagnostics-worker
+  detection-worker:
+    image: detection-worker
     build:
       context: .
       dockerfile: src/TxMonitoring.Detection.Worker/Dockerfile
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
-      - ConnectionStrings__IndustrialDb=Host=postgres;Database=industrial_db;Username=admin;Password=password
+      - ConnectionStrings__TxMonitoringDb=Host=postgres;Database=tx_monitoring;Username=admin;Password=password
       - Consumer__BaseBackoffSeconds=1
       - Consumer__MaxBackoffSeconds=30
       - Outbox__IdleDelayMs=500
@@ -158,13 +158,11 @@ services:
       - Outbox__MaxBackoffSeconds=30
       - Outbox__PublishedRetentionHours=168
       - Outbox__MaintenanceIntervalSeconds=30
-      - Gemini__ApiKey=${GEMINI_API_KEY}
-      - Gemini__Model=gemini-flash-lite-latest
       - Kafka__BootstrapServers=kafka:9092
-      - Kafka__GroupId=diagnostics-group
-      - Kafka__EventsTopic=telemetry-events
-      - Kafka__AlertsTopic=telemetry-alerts
-      - Kafka__DeadLetterTopic=telemetry-events-dlq
+      - Kafka__GroupId=detection-group
+      - Kafka__EventsTopic=transaction-events
+      - Kafka__AlertsTopic=risk-alerts
+      - Kafka__DeadLetterTopic=transaction-events-dlq
       - Kafka__ReadinessTimeoutSeconds=3
       - OTel__ServiceName=TxMonitoring.Detection.Worker
       - OTel__Endpoint=http://otel-collector:4317
@@ -180,57 +178,57 @@ services:
       retries: 12
       start_period: 20s
 
-  sensor-emulator:
-    image: sensor-emulator
+  feed-emulator:
+    image: feed-emulator
     build:
       context: .
       dockerfile: src/TxMonitoring.Feed.Emulator/Dockerfile
     environment:
-      - Gateway__Url=http://edge-gateway:8080
-      - Emulator__DeviceCount=4
-      - Emulator__IntervalSeconds=2
-      - Emulator__BufferCapacity=10000
-      - Emulator__ReplicaId=0 # owns EQ-0..EQ-3
+      - Gateway__Url=http://capture-gateway:8080
+      - Generator__AccountCount=4
+      - Generator__IntervalSeconds=5
+      - Generator__BufferCapacity=10000
+      - Generator__ReplicaId=0 # owns ACCT-0000..ACCT-0003
       - OTel__ServiceName=TxMonitoring.Feed.Emulator
       - OTel__Endpoint=http://otel-collector:4317
     depends_on:
-      edge-gateway:
+      capture-gateway:
         condition: service_healthy
 
-  sensor-emulator-2:
-    image: sensor-emulator
+  feed-emulator-2:
+    image: feed-emulator
     profiles: [fleet]
     build:
       context: .
       dockerfile: src/TxMonitoring.Feed.Emulator/Dockerfile
     environment:
-      - Gateway__Url=http://edge-gateway:8080
-      - Emulator__DeviceCount=4
-      - Emulator__IntervalSeconds=2
-      - Emulator__BufferCapacity=10000
-      - Emulator__ReplicaId=1 # owns EQ-4..EQ-7
+      - Gateway__Url=http://capture-gateway:8080
+      - Generator__AccountCount=4
+      - Generator__IntervalSeconds=5
+      - Generator__BufferCapacity=10000
+      - Generator__ReplicaId=1 # owns ACCT-0004..ACCT-0007
       - OTel__ServiceName=TxMonitoring.Feed.Emulator
       - OTel__Endpoint=http://otel-collector:4317
     depends_on:
-      edge-gateway:
+      capture-gateway:
         condition: service_healthy
 
-  sensor-emulator-3:
-    image: sensor-emulator
+  feed-emulator-3:
+    image: feed-emulator
     profiles: [fleet]
     build:
       context: .
       dockerfile: src/TxMonitoring.Feed.Emulator/Dockerfile
     environment:
-      - Gateway__Url=http://edge-gateway:8080
-      - Emulator__DeviceCount=4
-      - Emulator__IntervalSeconds=2
-      - Emulator__BufferCapacity=10000
-      - Emulator__ReplicaId=2 # owns EQ-8..EQ-11
+      - Gateway__Url=http://capture-gateway:8080
+      - Generator__AccountCount=4
+      - Generator__IntervalSeconds=5
+      - Generator__BufferCapacity=10000
+      - Generator__ReplicaId=2 # owns ACCT-0008..ACCT-0011
       - OTel__ServiceName=TxMonitoring.Feed.Emulator
       - OTel__Endpoint=http://otel-collector:4317
     depends_on:
-      edge-gateway:
+      capture-gateway:
         condition: service_healthy
 
   postgres:
@@ -240,11 +238,11 @@ services:
     environment:
       POSTGRES_USER: admin
       POSTGRES_PASSWORD: password
-      POSTGRES_DB: industrial_db
+      POSTGRES_DB: tx_monitoring
     ports:
       - "127.0.0.1:5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U admin -d industrial_db"]
+      test: ["CMD-SHELL", "pg_isready -U admin -d tx_monitoring"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -321,9 +319,9 @@ services:
     entrypoint: ["/bin/bash", "-ec"]
     command:
       - |
-        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic telemetry-events --partitions 6 --replication-factor 1
-        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic telemetry-alerts --partitions 6 --replication-factor 1
-        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic telemetry-events-dlq --partitions 6 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic transaction-events --partitions 6 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic risk-alerts --partitions 6 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic transaction-events-dlq --partitions 6 --replication-factor 1
 
   kafka-ui:
     image: provectuslabs/kafka-ui:v0.7.2

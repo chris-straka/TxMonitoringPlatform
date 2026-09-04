@@ -54,24 +54,24 @@ public sealed class EdgeDbContextTests
         );
 
         var id = Guid.CreateVersion7().ToString("D");
-        db.QuarantinedTelemetryRecords.Add(
-            new QuarantinedTelemetryRecord
+        db.QuarantinedTransactions.Add(
+            new QuarantinedTransaction
             {
                 MessageId = id,
                 OriginalQueueId = 1,
-                EquipmentId = "EQ-1",
+                AccountId = "ACCT-1",
                 SequenceNumber = 1,
                 OccurredAt = DateTimeOffset.UtcNow,
                 BufferedAt = DateTimeOffset.UtcNow,
-                EngineTemperature = 90,
-                OilPressure = 45,
+                AmountMinor = 2_500,
+                Currency = "CAD",
                 RejectedAt = DateTimeOffset.UtcNow,
-                RejectionCode = BufferSettlementStore.CloudRejectionCode,
-                RejectionReason = BufferSettlementStore.CloudRejectionReason,
+                RejectionCode = BufferSettlementStore.IngestionRejectionCode,
+                RejectionReason = BufferSettlementStore.IngestionRejectionReason,
             }
         );
         await db.SaveChangesAsync();
 
-        Assert.True(await db.QuarantinedTelemetryRecords.AnyAsync(row => row.MessageId == id));
+        Assert.True(await db.QuarantinedTransactions.AnyAsync(row => row.MessageId == id));
     }
 }

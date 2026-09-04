@@ -44,17 +44,6 @@ public class KafkaOptions : IValidatableObject
     }
 }
 
-public class GeminiOptions
-{
-    public const string Section = "Gemini";
-
-    [Required(AllowEmptyStrings = false)]
-    public string ApiKey { get; set; } = string.Empty;
-
-    [Required(AllowEmptyStrings = false)]
-    public string Model { get; set; } = string.Empty;
-}
-
 public class ConsumerOptions
 {
     public const string Section = "Consumer";

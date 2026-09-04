@@ -1,7 +1,5 @@
 using Confluent.Kafka;
 
-using Google.GenAI;
-
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
@@ -41,17 +39,10 @@ builder
     .Bind(builder.Configuration.GetSection(OutboxOptions.Section))
     .ValidateDataAnnotations()
     .ValidateOnStart();
-builder
-    .Services.AddOptions<GeminiOptions>()
-    .Bind(builder.Configuration.GetSection(GeminiOptions.Section))
-    .ValidateDataAnnotations()
-    .ValidateOnStart();
-
 // Needed during registration, before the sp container exists.
 var otel = builder.Configuration.GetSection(OTelOptions.Section).Get<OTelOptions>()!;
 var kafka = builder.Configuration.GetSection(KafkaOptions.Section).Get<KafkaOptions>()!;
-var gemini = builder.Configuration.GetSection(GeminiOptions.Section).Get<GeminiOptions>()!;
-var pgConnectionString = builder.Configuration.GetConnectionString("IndustrialDb");
+var pgConnectionString = builder.Configuration.GetConnectionString("TxMonitoringDb");
 ArgumentException.ThrowIfNullOrWhiteSpace(pgConnectionString);
 #endregion
 
@@ -86,7 +77,7 @@ builder
     );
 
 builder.Services.AddSingleton<WorkerMetrics>();
-builder.Services.AddSingleton<DiagnosticsConsumerReadiness>();
+builder.Services.AddSingleton<DetectionConsumerReadiness>();
 
 // Kafka
 builder.Services.AddSingleton(sp =>
@@ -118,31 +109,31 @@ builder.Services.AddSingleton<IAdminClient>(
 );
 builder
     .Services.AddHealthChecks()
-    .AddCheck<DiagnosticsConsumerReadiness>(
+    .AddCheck<DetectionConsumerReadiness>(
         "kafka_assignment",
         failureStatus: HealthStatus.Unhealthy,
         tags: ["ready"]
     )
-    .AddCheck<DiagnosticsKafkaReadinessCheck>(
+    .AddCheck<DetectionKafkaReadinessCheck>(
         "kafka_topics",
         failureStatus: HealthStatus.Unhealthy,
         tags: ["ready"],
         timeout: TimeSpan.FromSeconds(KafkaOptions.MaximumReadinessTimeoutSeconds + 1)
     )
-    .AddCheck<DiagnosticsDatabaseReadinessCheck>(
+    .AddCheck<DetectionDatabaseReadinessCheck>(
         "postgres_migrations",
         failureStatus: HealthStatus.Unhealthy,
         tags: ["ready"]
     );
 
-// Setup AI features
+// The online per-account spike detector artifact. The policy port regenerates this for the
+// amount feature instead of reusing the industrial temperature binary.
 builder.Services.AddSingleton(
     new ModelEngine(Path.Combine(AppContext.BaseDirectory, "model.zip"))
 );
-builder.Services.AddSingleton(new Client(apiKey: gemini.ApiKey));
 
 // A hosted service, so the consume loop follows the app lifecycle without blocking it.
-builder.Services.AddHostedService<TelemetryConsumerWorker>();
+builder.Services.AddHostedService<TransactionConsumerWorker>();
 builder.Services.AddHostedService<AlertOutboxPublisherWorker>();
 
 var app = builder.Build();

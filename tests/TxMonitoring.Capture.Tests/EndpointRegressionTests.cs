@@ -40,20 +40,20 @@ public sealed class EndpointRegressionTests
         await using (var scope = app.Services.CreateAsyncScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<EdgeDbContext>();
-            db.QuarantinedTelemetryRecords.Add(
-                new QuarantinedTelemetryRecord
+            db.QuarantinedTransactions.Add(
+                new QuarantinedTransaction
                 {
                     MessageId = messageId,
                     OriginalQueueId = 7,
-                    EquipmentId = "EQ-quarantined",
+                    AccountId = "ACCT-quarantined",
                     SequenceNumber = 11,
                     OccurredAt = DateTimeOffset.UtcNow.AddMinutes(-2),
                     BufferedAt = DateTimeOffset.UtcNow.AddMinutes(-1),
-                    EngineTemperature = 81,
-                    OilPressure = 42,
+                    AmountMinor = 2_500,
+                    Currency = "CAD",
                     RejectedAt = DateTimeOffset.UtcNow,
-                    RejectionCode = BufferSettlementStore.CloudRejectionCode,
-                    RejectionReason = BufferSettlementStore.CloudRejectionReason,
+                    RejectionCode = BufferSettlementStore.IngestionRejectionCode,
+                    RejectionReason = BufferSettlementStore.IngestionRejectionReason,
                 }
             );
             await db.SaveChangesAsync();
@@ -61,21 +61,23 @@ public sealed class EndpointRegressionTests
 
         using var client = CreateClient(app);
         var response = await client.PostAsJsonAsync(
-            "/api/local/telemetry",
-            new TelemetryDto(
+            "/api/local/transactions",
+            new TransactionSubmission(
                 messageId,
-                "EQ-quarantined",
+                "ACCT-quarantined",
                 11,
-                DateTimeOffset.UtcNow,
-                81,
-                42
+                TxMonitoring.Shared.TransactionTime.TruncateToMilliseconds(
+                    DateTimeOffset.UtcNow
+                ),
+                2_500,
+                "CAD"
             )
         );
 
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
         await using var verificationScope = app.Services.CreateAsyncScope();
         var verificationDb = verificationScope.ServiceProvider.GetRequiredService<EdgeDbContext>();
-        Assert.Empty(await verificationDb.TelemetryRecords.ToListAsync());
+        Assert.Empty(await verificationDb.BufferedTransactions.ToListAsync());
         Assert.Equal(0, app.Services.GetRequiredService<BufferDepth>().Current);
     }
 

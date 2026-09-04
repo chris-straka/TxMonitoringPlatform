@@ -10,20 +10,20 @@ using TxMonitoring.Capture.Gateway.Configuration;
 using TxMonitoring.Capture.Gateway.Features.Buffer;
 using TxMonitoring.Capture.Gateway.Features.Upload;
 using TxMonitoring.Capture.Gateway.Infrastructure;
-using TxMonitoring.Ingestion.Api; // generated from Protos/telemetry.proto
+using TxMonitoring.Ingestion.V1; // generated from Protos/transactions.proto
 using TxMonitoring.Shared;
 
 // --------------------------------------------------------------------------------
-// Sits between sensors and the cloud and durably owns every valid reading after replying 202,
-// even when the cloud, network, or this process dies. The emulator is intentionally best-effort
-// before that acknowledgement boundary.
+// Sits between the feed generator and ingestion and durably owns every valid transaction
+// after replying 202, even when ingestion, the network, or this process dies. The feed
+// emulator is intentionally best-effort before that acknowledgement boundary.
 //
-//   sensor --HTTP--> [ receiver -> SQLite (durable) -> uploader ] --gRPC--> cloud
-//                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-//                      two INDEPENDENT loops, coupled only by disk
+//   generator --HTTP--> [ receiver -> SQLite (durable) -> uploader ] --gRPC--> ingestion
+//                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+//                        two INDEPENDENT loops, coupled only by disk
 //
-// We send the sensor 202 the moment the reading is on local disk (not on cloud).
-// This decoupling allows the sensor to produce through a cloud outage.
+// We send the generator 202 the moment the transaction is on local disk (not on ingestion).
+// This decoupling allows the feed to produce through an ingestion outage.
 // --------------------------------------------------------------------------------
 
 var builder = WebApplication.CreateBuilder(args);
@@ -40,8 +40,8 @@ builder
     .ValidateDataAnnotations()
     .ValidateOnStart();
 builder
-    .Services.AddOptions<CloudOptions>()
-    .Bind(builder.Configuration.GetSection(CloudOptions.Section))
+    .Services.AddOptions<IngestionOptions>()
+    .Bind(builder.Configuration.GetSection(IngestionOptions.Section))
     .ValidateDataAnnotations()
     .ValidateOnStart();
 builder
@@ -62,7 +62,8 @@ builder
 
 // Needed during registration, before the service provider container exists.
 var otel = builder.Configuration.GetSection(OTelOptions.Section).Get<OTelOptions>()!;
-var cloud = builder.Configuration.GetSection(CloudOptions.Section).Get<CloudOptions>()!;
+var ingestion =
+    builder.Configuration.GetSection(IngestionOptions.Section).Get<IngestionOptions>()!;
 var buffer = builder.Configuration.GetSection(BufferOptions.Section).Get<BufferOptions>()!;
 var transportSecurity =
     builder.Configuration.GetSection(TransportSecurityOptions.Section)
@@ -71,11 +72,11 @@ var transportSecurity =
 
 if (
     transportSecurity.Enabled
-    && !cloud.ApiUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
+    && !ingestion.ApiUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
 )
 {
     throw new InvalidOperationException(
-        "Cloud:ApiUrl must use https:// when transport security is enabled."
+        "Ingestion:ApiUrl must use https:// when transport security is enabled."
     );
 }
 
@@ -115,10 +116,10 @@ builder
             .AddOtlpExporter(opt => opt.Endpoint = new Uri(otel.Endpoint))
     );
 
-// gRPC connection to the cloud (ingestion API).
-var ingestionClient = builder.Services.AddGrpcClient<TelemetryIngestion.TelemetryIngestionClient>(o =>
+// gRPC connection to ingestion.
+var ingestionClient = builder.Services.AddGrpcClient<TransactionIngestion.TransactionIngestionClient>(o =>
 {
-    o.Address = new Uri(cloud.ApiUrl);
+    o.Address = new Uri(ingestion.ApiUrl);
 });
 if (transportSecurity.Enabled)
 {
@@ -127,12 +128,12 @@ if (transportSecurity.Enabled)
     );
 }
 
-// Uploads readings from SQLite to the cloud
+// Uploads transactions from SQLite to ingestion
 builder.Services.AddHostedService<UploaderWorker>();
 
 var app = builder.Build();
 
-// Migrations belong cloud side (see Diagnostics.Worker)
+// Migrations belong ingestion side (see Detection.Worker)
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<EdgeDbContext>();
@@ -150,13 +151,13 @@ using (var scope = app.Services.CreateScope())
     // Allows the uploader read and the receiver to write simultaneously
     await db.Database.ExecuteSqlRawAsync("PRAGMA journal_mode=WAL;");
 
-    var buffered = await db.TelemetryRecords.CountAsync();
+    var buffered = await db.BufferedTransactions.CountAsync();
     app.Services.GetRequiredService<BufferDepth>().Initialize(buffered);
     if (buffered > 0)
     {
         // Anything still left in the DB was written by a previous run (proof of durability)
         app.Logger.LogInformation(
-            "Recovered {Count} unsent readings from the local buffer at {Path}.",
+            "Recovered {Count} unsent transactions from the local buffer at {Path}.",
             buffered,
             buffer.Path
         );

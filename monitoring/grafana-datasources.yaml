@@ -1,0 +1,44 @@
+apiVersion: 1
+datasources:
+    - name: Prometheus
+      type: prometheus
+      uid: prometheus_ds
+      url: http://prometheus:9090
+      isDefault: true
+      editable: false
+      jsonData:
+          timeInterval: 30s
+
+    - name: Tempo
+      type: tempo
+      uid: tempo_ds
+      url: http://tempo:3200
+      editable: false
+      jsonData:
+          nodeGraph:
+              enabled: true
+          # Do not advertise a serviceMap datasource until Tempo's metrics-generator and
+          # Prometheus remote-write receiver are configured; otherwise Grafana shows an
+          # enabled service graph backed by metrics this stack never creates.
+          tracesToLogsV2:
+              datasourceUid: loki_ds
+              spanStartTimeShift: -1m
+              spanEndTimeShift: 1m
+              filterByTraceID: true
+              filterBySpanID: false
+
+    - name: Loki
+      type: loki
+      uid: loki_ds
+      url: http://loki:3100
+      editable: false
+      jsonData:
+          derivedFields:
+              - name: TraceID
+                datasourceUid: tempo_ds
+                matcherType: label
+                matcherRegex: trace_id
+                # Grafana provisioning treats a single `$` as environment-variable expansion.
+                # Escape it so the dashboard receives the runtime field interpolation token.
+                url: "$${__value.raw}"
+                urlDisplayLabel: View trace

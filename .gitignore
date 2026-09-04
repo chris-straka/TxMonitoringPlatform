@@ -1,0 +1,67 @@
+# Build results
+bin/
+obj/
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Rider / JetBrains
+.idea/
+*.sln.iml
+
+# VS Code
+
+# NuGet
+packages/
+*.nupkg
+.nuget/
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test Results
+TestResults/
+*.trx
+
+# Publish output
+publish/
+artifacts/
+
+# Local secrets/config
+# appsettings.Development.json is COMMITTED on purpose -- it is non-secret local wiring
+# (ports, service names, intervals) and it is how a fresh clone runs without guesswork.
+# Real secrets go in .NET User Secrets (dotnet user-secrets), which live OUTSIDE the
+# repo in ~/.microsoft/usersecrets/, or in .env for docker compose.
+secrets.json
+
+# Coverage reports
+coverage/
+*.coverage
+*.coveragexml
+
+# Terraform local state, provider cache, and saved plans
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Editor/language-server caches
+*.lscache
+
+# My stuff
+AI.md

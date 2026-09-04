@@ -1,0 +1,9 @@
+{
+    "recommendations": [
+        "ms-dotnettools.csdevkit",
+        "csharpier.csharpier-vscode",
+        "editorconfig.editorconfig",
+        "ms-vscode.makefile-tools",
+        "hashicorp.terraform",
+    ],
+}

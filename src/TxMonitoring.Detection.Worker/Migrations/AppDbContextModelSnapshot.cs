@@ -78,7 +78,13 @@ namespace TxMonitoring.Detection.Worker.Migrations
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
 
+                    b.Property<long?>("Amount5mMinor")
+                        .HasColumnType("bigint");
+
                     b.Property<long>("AmountMinor")
+                        .HasColumnType("bigint");
+
+                    b.Property<long?>("Count1m")
                         .HasColumnType("bigint");
 
                     b.Property<string>("Currency")
@@ -89,21 +95,25 @@ namespace TxMonitoring.Detection.Worker.Migrations
                     b.Property<DateTimeOffset>("DetectedAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<int?>("DetectorHistoryCount")
+                    b.Property<int>("DetectorHistoryCount")
                         .HasColumnType("integer");
 
-                    b.Property<double?>("DetectorPValue")
+                    b.Property<bool>("DetectorIsSpike")
+                        .HasColumnType("boolean");
+
+                    b.Property<double>("DetectorPValue")
                         .HasColumnType("double precision");
 
-                    b.Property<double?>("DetectorScore")
+                    b.Property<double>("DetectorRawScore")
                         .HasColumnType("double precision");
 
                     b.Property<string>("DetectorVersion")
+                        .IsRequired()
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
 
-                    b.Property<bool>("IsAnomaly")
-                        .HasColumnType("boolean");
+                    b.Property<int>("FingerprintVersion")
+                        .HasColumnType("integer");
 
                     b.Property<Guid>("MessageId")
                         .HasColumnType("uuid");
@@ -111,20 +121,62 @@ namespace TxMonitoring.Detection.Worker.Migrations
                     b.Property<DateTimeOffset>("OccurredAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<byte[]>("PayloadFingerprint")
+                        .IsRequired()
+                        .HasColumnType("bytea");
+
+                    b.Property<string>("PolicyConfigurationHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("PolicyVersion")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("ReasonsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
                     b.Property<DateTimeOffset>("ReceivedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<bool>("ReviewRecommended")
+                        .HasColumnType("boolean");
+
+                    b.Property<int>("RiskScore")
+                        .HasColumnType("integer");
+
                     b.Property<long>("SequenceNumber")
                         .HasColumnType("bigint");
+
+                    b.Property<string>("VelocityStatus")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
 
                     b.HasKey("Id");
 
                     b.HasIndex("MessageId")
                         .IsUnique();
 
-                    b.HasIndex("AccountId", "OccurredAt");
+                    b.HasIndex("AccountId", "Currency", "OccurredAt");
 
-                    b.ToTable("Transactions", (string)null);
+                    b.HasIndex("AccountId", "Currency", "DetectedAt", "Id");
+
+                    b.ToTable("Transactions", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_Transactions_AmountMinor", "\"AmountMinor\" >= 1 AND \"AmountMinor\" <= 100000000000");
+
+                            t.HasCheckConstraint("CK_Transactions_Currency", "char_length(\"Currency\") = 3");
+
+                            t.HasCheckConstraint("CK_Transactions_RiskScore", "\"RiskScore\" >= 0 AND \"RiskScore\" <= 100");
+
+                            t.HasCheckConstraint("CK_Transactions_VelocityCounts", "\"Count1m\" IS NULL OR \"Count1m\" >= 0");
+
+                            t.HasCheckConstraint("CK_Transactions_VelocitySums", "\"Amount5mMinor\" IS NULL OR \"Amount5mMinor\" >= 0");
+                        });
                 });
 #pragma warning restore 612, 618
         }

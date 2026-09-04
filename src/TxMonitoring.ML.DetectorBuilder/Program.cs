@@ -4,6 +4,8 @@ using Microsoft.ML;
 using Microsoft.ML.Data;
 using Microsoft.ML.Transforms.TimeSeries;
 
+using TxMonitoring.Shared;
+
 // Helper to get the actual folder where this file lives
 string GetSourceDir([CallerFilePath] string path = "") => Path.GetDirectoryName(path)!;
 
@@ -12,20 +14,21 @@ var modelPath = Path.GetFullPath(
     Path.Combine(localDir, "..", "TxMonitoring.Detection.Worker", "model.zip")
 );
 
-Console.WriteLine("Building online IID spike-detector configuration...");
+Console.WriteLine("Building online IID spike-detector configuration for the amount feature...");
 
 var mlContext = new MLContext();
 
 // DetectIidSpike is an online statistical detector. Fit validates the schema but does not learn
 // parameters from historical rows, so one representative value is sufficient to build the
-// transformer. The worker warms each equipment's independent state from its recent Postgres rows.
+// transformer. The worker warms each account's independent state from its recent Postgres rows,
+// transforming minor units through the same shared AmountFeatures function the runtime uses.
 var schemaData = mlContext.Data.LoadFromEnumerable(
-    new[] { new TelemetryData { EngineTemperature = 90.0f } }
+    new[] { new AmountObservation { AmountFeature = AmountFeatures.FromAmountMinor(2_500) } }
 );
 
 var pipeline = mlContext.Transforms.DetectIidSpike(
-    outputColumnName: nameof(AnomalyPrediction.Prediction),
-    inputColumnName: nameof(TelemetryData.EngineTemperature),
+    outputColumnName: nameof(SpikePrediction.Prediction),
+    inputColumnName: nameof(AmountObservation.AmountFeature),
     confidence: 90.0,
     pvalueHistoryLength: 20
 );
@@ -33,33 +36,40 @@ var pipeline = mlContext.Transforms.DetectIidSpike(
 var model = pipeline.Fit(schemaData);
 
 mlContext.Model.Save(model, schemaData.Schema, modelPath);
-Console.WriteLine($"✅ Model saved to: {modelPath}");
+Console.WriteLine($"Model saved to: {modelPath}");
 
 Console.WriteLine("\n--- Testing Model Locally ---");
-var predictionEngine = model.CreateTimeSeriesEngine<TelemetryData, AnomalyPrediction>(mlContext);
+var predictionEngine = model.CreateTimeSeriesEngine<AmountObservation, SpikePrediction>(mlContext);
 
-// Warm up the engine with 50 "Normal" points
+// Warm up the engine with 50 steady $25-$30-equivalent points. Deterministic spread, not
+// Random, so regenerating the artifact always exercises the same scenario; constant history
+// would leave the detector with zero variance and flag any jitter as a spike.
 for (int i = 0; i < 50; i++)
 {
-    float normalWithNoise = 85.0f + (float)(Random.Shared.NextDouble() * 15);
-    predictionEngine.Predict(new TelemetryData { EngineTemperature = normalWithNoise });
+    predictionEngine.Predict(
+        new AmountObservation { AmountFeature = AmountFeatures.FromAmountMinor(2_500 + ((i * 37) % 500)) }
+    );
 }
 
-// Test Normal (Inside the 85-100 range)
-var normalResult = predictionEngine.Predict(new TelemetryData { EngineTemperature = 92.0f });
-Console.WriteLine($"Normal temp (92.0) -> Is Anomaly? {normalResult.Prediction[0] == 1}");
+// Normal (steady $25-equivalent)
+var normalResult = predictionEngine.Predict(
+    new AmountObservation { AmountFeature = AmountFeatures.FromAmountMinor(2_600) }
+);
+Console.WriteLine($"Normal amount (2600) -> Is Spike? {normalResult.Prediction[0] == 1}");
 
-// Test Spike (Way outside the 85-100 range)
-var spikeResult = predictionEngine.Predict(new TelemetryData { EngineTemperature = 250.0f });
-Console.WriteLine($"Spike temp (250.0) -> Is Anomaly? {spikeResult.Prediction[0] == 1}");
+// Test Spike ($4,000-equivalent, far outside the warmed baseline)
+var spikeResult = predictionEngine.Predict(
+    new AmountObservation { AmountFeature = AmountFeatures.FromAmountMinor(400_000) }
+);
+Console.WriteLine($"Spike amount (400000) -> Is Spike? {spikeResult.Prediction[0] == 1}");
 
-public class TelemetryData
+public class AmountObservation
 {
-    [LoadColumn(2)]
-    public float EngineTemperature { get; set; }
+    [LoadColumn(0)]
+    public float AmountFeature { get; set; }
 }
 
-public class AnomalyPrediction
+public class SpikePrediction
 {
     [VectorType(3)]
     public double[] Prediction { get; set; } = default!;

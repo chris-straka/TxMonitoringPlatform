@@ -31,11 +31,68 @@ public sealed class EndpointRegressionTests
     }
 
     [Fact]
-    public async Task Delayed_retry_of_quarantined_id_is_acknowledged_without_requeueing()
+    public async Task Identical_live_retry_returns_accepted_without_duplicating()
+    {
+        await using var connection = await OpenConnectionAsync();
+        await using var app = await CreateAppAsync(connection);
+        using var client = CreateClient(app);
+        var submission = new TransactionSubmission(
+            Guid.CreateVersion7().ToString("D"),
+            "ACCT-live",
+            3,
+            TxMonitoring.Shared.TransactionTime.TruncateToMilliseconds(DateTimeOffset.UtcNow),
+            2_500,
+            "CAD"
+        );
+
+        var first = await client.PostAsJsonAsync("/api/local/transactions", submission);
+        var retry = await client.PostAsJsonAsync("/api/local/transactions", submission);
+
+        Assert.Equal(HttpStatusCode.Accepted, first.StatusCode);
+        Assert.Equal(HttpStatusCode.Accepted, retry.StatusCode);
+        await using var verificationScope = app.Services.CreateAsyncScope();
+        var verificationDb = verificationScope.ServiceProvider.GetRequiredService<EdgeDbContext>();
+        Assert.Equal(1, await verificationDb.BufferedTransactions.CountAsync());
+        Assert.Equal(1, app.Services.GetRequiredService<BufferDepth>().Current);
+    }
+
+    [Fact]
+    public async Task Conflicting_id_reuse_returns_conflict_and_preserves_the_original()
+    {
+        await using var connection = await OpenConnectionAsync();
+        await using var app = await CreateAppAsync(connection);
+        using var client = CreateClient(app);
+        var messageId = Guid.CreateVersion7().ToString("D");
+        var occurredAt = TxMonitoring.Shared.TransactionTime.TruncateToMilliseconds(
+            DateTimeOffset.UtcNow
+        );
+
+        var first = await client.PostAsJsonAsync(
+            "/api/local/transactions",
+            new TransactionSubmission(messageId, "ACCT-orig", 3, occurredAt, 2_500, "CAD")
+        );
+        var conflict = await client.PostAsJsonAsync(
+            "/api/local/transactions",
+            new TransactionSubmission(messageId, "ACCT-orig", 3, occurredAt, 9_999, "CAD")
+        );
+
+        Assert.Equal(HttpStatusCode.Accepted, first.StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, conflict.StatusCode);
+        await using var verificationScope = app.Services.CreateAsyncScope();
+        var verificationDb = verificationScope.ServiceProvider.GetRequiredService<EdgeDbContext>();
+        var stored = await verificationDb.BufferedTransactions.SingleAsync();
+        Assert.Equal(2_500, stored.AmountMinor);
+    }
+
+    [Fact]
+    public async Task Quarantined_retry_returns_a_stable_terminal_rejection()
     {
         await using var connection = await OpenConnectionAsync();
         await using var app = await CreateAppAsync(connection);
         var messageId = Guid.CreateVersion7().ToString("D");
+        var occurredAt = TxMonitoring.Shared.TransactionTime.TruncateToMilliseconds(
+            DateTimeOffset.UtcNow.AddMinutes(-2)
+        );
 
         await using (var scope = app.Services.CreateAsyncScope())
         {
@@ -44,10 +101,19 @@ public sealed class EndpointRegressionTests
                 new QuarantinedTransaction
                 {
                     MessageId = messageId,
+                    PayloadFingerprint =
+                        TxMonitoring.Shared.TransactionFingerprint.ComputeV1(
+                            "ACCT-quarantined",
+                            11,
+                            occurredAt,
+                            2_500,
+                            "CAD"
+                        ),
+                    FingerprintVersion = TxMonitoring.Shared.TransactionFingerprint.Version,
                     OriginalQueueId = 7,
                     AccountId = "ACCT-quarantined",
                     SequenceNumber = 11,
-                    OccurredAt = DateTimeOffset.UtcNow.AddMinutes(-2),
+                    OccurredAt = occurredAt,
                     BufferedAt = DateTimeOffset.UtcNow.AddMinutes(-1),
                     AmountMinor = 2_500,
                     Currency = "CAD",
@@ -66,15 +132,13 @@ public sealed class EndpointRegressionTests
                 messageId,
                 "ACCT-quarantined",
                 11,
-                TxMonitoring.Shared.TransactionTime.TruncateToMilliseconds(
-                    DateTimeOffset.UtcNow
-                ),
+                occurredAt,
                 2_500,
                 "CAD"
             )
         );
 
-        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
         await using var verificationScope = app.Services.CreateAsyncScope();
         var verificationDb = verificationScope.ServiceProvider.GetRequiredService<EdgeDbContext>();
         Assert.Empty(await verificationDb.BufferedTransactions.ToListAsync());

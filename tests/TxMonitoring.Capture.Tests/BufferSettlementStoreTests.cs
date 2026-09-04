@@ -41,6 +41,7 @@ public sealed class BufferSettlementStoreTests
 
         var quarantined = await db.QuarantinedTransactions.SingleAsync();
         Assert.Equal(rejected.MessageId, quarantined.MessageId);
+        Assert.Equal(rejected.PayloadFingerprint, quarantined.PayloadFingerprint);
         Assert.Equal(rejected.Id, quarantined.OriginalQueueId);
         Assert.Equal(rejected.AccountId, quarantined.AccountId);
         Assert.Equal(rejected.SequenceNumber, quarantined.SequenceNumber);
@@ -189,18 +190,29 @@ public sealed class BufferSettlementStoreTests
         return connection;
     }
 
-    private static BufferedTransaction Reading(string accountId, long sequence) =>
-        new()
+    private static BufferedTransaction Reading(string accountId, long sequence)
+    {
+        var occurredAt = DateTimeOffset.UtcNow.AddSeconds(-2);
+        return new()
         {
             MessageId = Guid.CreateVersion7().ToString("D"),
+            PayloadFingerprint = TxMonitoring.Shared.TransactionFingerprint.ComputeV1(
+                accountId,
+                sequence,
+                occurredAt,
+                2_500,
+                "CAD"
+            ),
+            FingerprintVersion = TxMonitoring.Shared.TransactionFingerprint.Version,
             AccountId = accountId,
             SequenceNumber = sequence,
-            OccurredAt = DateTimeOffset.UtcNow.AddSeconds(-2),
+            OccurredAt = occurredAt,
             BufferedAt = DateTimeOffset.UtcNow.AddSeconds(-1),
             TraceParent = "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01",
             AmountMinor = 2_500,
             Currency = "CAD",
         };
+    }
 
     private static QuarantinedTransaction Quarantined(
         BufferedTransaction reading,

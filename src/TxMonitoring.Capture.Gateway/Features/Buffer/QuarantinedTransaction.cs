@@ -11,6 +11,8 @@ namespace TxMonitoring.Capture.Gateway.Features.Buffer;
 public sealed class QuarantinedTransaction
 {
     public string MessageId { get; set; } = string.Empty;
+    public byte[] PayloadFingerprint { get; set; } = [];
+    public int FingerprintVersion { get; set; }
     public long OriginalQueueId { get; set; }
     public string AccountId { get; set; } = string.Empty;
     public long SequenceNumber { get; set; }

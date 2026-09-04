@@ -46,6 +46,12 @@ public sealed class EdgeMetrics : IDisposable
             description: "Readings acknowledged as duplicates because the MessageId was buffered, recently settled, or quarantined."
         );
 
+        IdempotencyConflicts = _meter.CreateCounter<long>(
+            "capture.transaction.idempotency_conflict",
+            unit: "{transaction}",
+            description: "Retries reusing a MessageId with different immutable content; the original is preserved."
+        );
+
         Uploaded = _meter.CreateCounter<long>(
             "edge.telemetry.uploaded",
             unit: "{reading}",
@@ -111,6 +117,7 @@ public sealed class EdgeMetrics : IDisposable
 
     public Counter<long> Received { get; }
     public Counter<long> Duplicates { get; }
+    public Counter<long> IdempotencyConflicts { get; }
     public Counter<long> Uploaded { get; }
     public Counter<long> Rejected { get; }
     public Counter<long> Shed { get; }

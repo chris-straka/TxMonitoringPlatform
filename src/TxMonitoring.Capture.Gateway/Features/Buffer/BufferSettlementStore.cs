@@ -71,6 +71,8 @@ public sealed class BufferSettlementStore(
                 {
                     MessageId = row.MessageId,
                     SettledAt = settledAt,
+                    PayloadFingerprint = row.PayloadFingerprint,
+                    FingerprintVersion = row.FingerprintVersion,
                 })
             );
             db.QuarantinedTransactions.AddRange(
@@ -82,6 +84,8 @@ public sealed class BufferSettlementStore(
                     .Select(row => new QuarantinedTransaction
                     {
                         MessageId = row.MessageId,
+                        PayloadFingerprint = row.PayloadFingerprint,
+                        FingerprintVersion = row.FingerprintVersion,
                         OriginalQueueId = row.Id,
                         AccountId = row.AccountId,
                         SequenceNumber = row.SequenceNumber,

@@ -24,6 +24,8 @@ public static class EdgeDatabaseInitializer
             CREATE TABLE IF NOT EXISTS "BufferedTransactions" (
                 "Id" INTEGER NOT NULL CONSTRAINT "PK_BufferedTransactions" PRIMARY KEY AUTOINCREMENT,
                 "MessageId" TEXT NOT NULL,
+                "PayloadFingerprint" BLOB NOT NULL,
+                "FingerprintVersion" INTEGER NOT NULL,
                 "AccountId" TEXT NOT NULL,
                 "SequenceNumber" INTEGER NOT NULL,
                 "OccurredAt" TEXT NOT NULL,
@@ -46,7 +48,9 @@ public static class EdgeDatabaseInitializer
             """
             CREATE TABLE IF NOT EXISTS "SettledMessages" (
                 "MessageId" TEXT NOT NULL CONSTRAINT "PK_SettledMessages" PRIMARY KEY,
-                "SettledAt" TEXT NOT NULL
+                "SettledAt" TEXT NOT NULL,
+                "PayloadFingerprint" BLOB NOT NULL,
+                "FingerprintVersion" INTEGER NOT NULL
             );
             """,
             cancellationToken
@@ -62,6 +66,8 @@ public static class EdgeDatabaseInitializer
             """
             CREATE TABLE IF NOT EXISTS "QuarantinedTransactions" (
                 "MessageId" TEXT NOT NULL CONSTRAINT "PK_QuarantinedTransactions" PRIMARY KEY,
+                "PayloadFingerprint" BLOB NOT NULL,
+                "FingerprintVersion" INTEGER NOT NULL,
                 "OriginalQueueId" INTEGER NOT NULL,
                 "AccountId" TEXT NOT NULL,
                 "SequenceNumber" INTEGER NOT NULL,

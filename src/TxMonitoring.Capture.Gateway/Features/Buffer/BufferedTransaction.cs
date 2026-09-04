@@ -20,6 +20,12 @@ public class BufferedTransaction
     // SettledMessage catches one that arrives after this row has been removed.
     public string MessageId { get; set; } = string.Empty;
 
+    // SHA-256 over the immutable origin content. MessageId selects the record; the
+    // fingerprint proves a retry carries the same content. Same ID plus different
+    // content is a conflict and never overwrites the first event.
+    public byte[] PayloadFingerprint { get; set; } = [];
+    public int FingerprintVersion { get; set; }
+
     // Opaque synthetic account key, forwarded untouched; the Kafka partition key downstream.
     public string AccountId { get; set; } = string.Empty;
 

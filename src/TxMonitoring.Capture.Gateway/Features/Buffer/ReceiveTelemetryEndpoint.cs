@@ -47,35 +47,93 @@ public static class ReceiveTelemetryEndpoint
                     return Results.BadRequest(new { error = validationError });
                 }
 
+                var fingerprint = TxMonitoring.Shared.TransactionFingerprint.ComputeV1(
+                    req.AccountId,
+                    req.SequenceNumber,
+                    req.OccurredAt,
+                    req.AmountMinor,
+                    req.Currency
+                );
+
                 await mutationGate.EnterAsync(http.RequestAborted);
                 try
                 {
                     // A MessageId can be queued, recently settled, or retained in rejection
                     // quarantine. Check all durable states before reserving capacity so delayed
                     // retries stay idempotent even when their shorter-lived settled marker expired.
-                    var alreadyKnown =
-                        await db.SettledMessages.AnyAsync(
-                            x => x.MessageId == canonicalMessageId,
-                            http.RequestAborted
-                        )
-                        || await db.BufferedTransactions.AnyAsync(
-                            x => x.MessageId == canonicalMessageId,
-                            http.RequestAborted
-                        )
-                        || await db.QuarantinedTransactions.AnyAsync(
-                            x => x.MessageId == canonicalMessageId,
-                            http.RequestAborted
-                        );
+                    // MessageId selects the record; the fingerprint proves the retry carries the
+                    // same immutable content. A different fingerprint is a 409 conflict: the
+                    // original is preserved and never overwritten.
+                    var live = await db.BufferedTransactions.FirstOrDefaultAsync(
+                        x => x.MessageId == canonicalMessageId,
+                        http.RequestAborted
+                    );
+                    if (live is not null)
+                    {
+                        return live.PayloadFingerprint.SequenceEqual(fingerprint)
+                            ? Duplicate(canonicalMessageId, req.AccountId)
+                            : Conflict(canonicalMessageId, req.AccountId);
+                    }
 
-                    if (alreadyKnown)
+                    var settled = await db.SettledMessages.FirstOrDefaultAsync(
+                        x => x.MessageId == canonicalMessageId,
+                        http.RequestAborted
+                    );
+                    if (settled is not null)
+                    {
+                        return settled.PayloadFingerprint.SequenceEqual(fingerprint)
+                            ? Duplicate(canonicalMessageId, req.AccountId)
+                            : Conflict(canonicalMessageId, req.AccountId);
+                    }
+
+                    var quarantined = await db.QuarantinedTransactions.FirstOrDefaultAsync(
+                        x => x.MessageId == canonicalMessageId,
+                        http.RequestAborted
+                    );
+                    if (quarantined is not null)
+                    {
+                        if (quarantined.PayloadFingerprint.SequenceEqual(fingerprint))
+                        {
+                            // Terminal rejection: ingestion already refused this exact content
+                            // permanently. A stable 422, never a requeue and never a 202.
+                            metrics.Duplicates.Add(1);
+                            logger.LogDebug(
+                                "Quarantined MessageId {MessageId} retried; returning terminal rejection.",
+                                canonicalMessageId
+                            );
+                            return Results.Json(
+                                new
+                                {
+                                    error = "terminal_rejection",
+                                    code = quarantined.RejectionCode,
+                                },
+                                statusCode: StatusCodes.Status422UnprocessableEntity
+                            );
+                        }
+
+                        return Conflict(canonicalMessageId, req.AccountId);
+                    }
+
+                    IResult Duplicate(string messageId, string accountId)
                     {
                         metrics.Duplicates.Add(1);
                         logger.LogDebug(
                             "Duplicate MessageId {MessageId} from {AccountId} ignored.",
-                            canonicalMessageId,
-                            req.AccountId
+                            messageId,
+                            accountId
                         );
                         return Results.Accepted();
+                    }
+
+                    IResult Conflict(string messageId, string accountId)
+                    {
+                        metrics.IdempotencyConflicts.Add(1);
+                        logger.LogWarning(
+                            "Conflicting immutable content for MessageId {MessageId} from {AccountId}; preserving the original.",
+                            messageId,
+                            accountId
+                        );
+                        return Results.Conflict(new { error = "idempotency_conflict" });
                     }
 
                     // Reserve before touching SQLite. Compare-exchange makes this ceiling exact
@@ -110,6 +168,8 @@ public static class ReceiveTelemetryEndpoint
                     var record = new BufferedTransaction
                     {
                         MessageId = canonicalMessageId,
+                        PayloadFingerprint = fingerprint,
+                        FingerprintVersion = TxMonitoring.Shared.TransactionFingerprint.Version,
                         AccountId = req.AccountId,
                         SequenceNumber = req.SequenceNumber,
                         // Equivalent source offsets are not different data: store the instant in UTC.

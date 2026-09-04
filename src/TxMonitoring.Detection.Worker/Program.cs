@@ -12,6 +12,7 @@ using OpenTelemetry.Trace;
 using TxMonitoring.Detection.Worker.Configuration;
 using TxMonitoring.Detection.Worker.Features.Diagnostics;
 using TxMonitoring.Detection.Worker.Features.Diagnostics.ML;
+using TxMonitoring.Detection.Worker.Features.RiskPolicy;
 using TxMonitoring.Detection.Worker.Infrastructure;
 using TxMonitoring.Detection.Worker.Infrastructure.Data;
 using TxMonitoring.Shared;
@@ -37,6 +38,11 @@ builder
 builder
     .Services.AddOptions<OutboxOptions>()
     .Bind(builder.Configuration.GetSection(OutboxOptions.Section))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+builder
+    .Services.AddOptions<RiskPolicyOptions>()
+    .Bind(builder.Configuration.GetSection(RiskPolicyOptions.Section))
     .ValidateDataAnnotations()
     .ValidateOnStart();
 // Needed during registration, before the sp container exists.
@@ -126,11 +132,17 @@ builder
         tags: ["ready"]
     );
 
-// The online per-account spike detector artifact. The policy port regenerates this for the
-// amount feature instead of reusing the industrial temperature binary.
+// The online per-account spike detector artifact, built for the amount feature.
 builder.Services.AddSingleton(
-    new ModelEngine(Path.Combine(AppContext.BaseDirectory, "model.zip"))
+    new AmountSpikeDetector(Path.Combine(AppContext.BaseDirectory, "model.zip"))
 );
+
+// One clock for the process; unit tests substitute a manual TimeProvider.
+builder.Services.AddSingleton(TimeProvider.System);
+
+// Redis velocity arrives with its own store; until then every observation degrades to
+// Unavailable and decisions score from the remaining signals.
+builder.Services.AddSingleton<IVelocityStore, UnavailableVelocityStore>();
 
 // A hosted service, so the consume loop follows the app lifecycle without blocking it.
 builder.Services.AddHostedService<TransactionConsumerWorker>();

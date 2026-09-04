@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 
@@ -11,6 +12,7 @@ using Npgsql;
 
 using TxMonitoring.Detection.Worker.Configuration;
 using TxMonitoring.Detection.Worker.Features.Diagnostics.ML;
+using TxMonitoring.Detection.Worker.Features.RiskPolicy;
 using TxMonitoring.Detection.Worker.Infrastructure;
 using TxMonitoring.Detection.Worker.Infrastructure.Data;
 using TxMonitoring.Shared;
@@ -22,12 +24,19 @@ public class TransactionConsumerWorker(
     ILogger<TransactionConsumerWorker> logger,
     IOptions<KafkaOptions> kafkaOptions,
     IOptions<ConsumerOptions> consumerOptions,
+    IOptions<RiskPolicyOptions> riskPolicyOptions,
     IDeadLetterPublisher deadLetterPublisher,
     DetectionConsumerReadiness readiness,
-    ModelEngine modelEngine,
+    AmountSpikeDetector spikeDetector,
+    IVelocityStore velocityStore,
+    TimeProvider timeProvider,
     WorkerMetrics metrics
 ) : BackgroundService
 {
+    private readonly string _policyConfigurationHash = RiskPolicyHash.Compute(
+        riskPolicyOptions.Value
+    );
+
     private int _consecutiveFailures;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -144,7 +153,21 @@ public class TransactionConsumerWorker(
                         ]
                     );
 
-                    await HandleTransactionAsync(data, messageId, stoppingToken);
+                    var outcome = await HandleTransactionAsync(data, messageId, stoppingToken);
+                    if (outcome == HandleOutcome.Conflict)
+                    {
+                        await deadLetterPublisher.PublishAsync(
+                            consumeResult,
+                            "MessageId reuses conflicting immutable content",
+                            stoppingToken
+                        );
+                        logger.LogWarning(
+                            "Quarantined conflicting MessageId {MessageId} at {TopicPartitionOffset}.",
+                            messageId,
+                            consumeResult.TopicPartitionOffset
+                        );
+                    }
+
                     consumer.Commit(consumeResult);
                     _consecutiveFailures = 0;
                 }
@@ -195,6 +218,13 @@ public class TransactionConsumerWorker(
         }
     }
 
+    private enum HandleOutcome
+    {
+        Processed,
+        Duplicate,
+        Conflict,
+    }
+
     // Jittered, because every replica fails on the same Postgres at the same instant and a
     // fixed delay makes them retry in lockstep.
     private async Task BackoffAsync(CancellationToken cancellationToken)
@@ -238,43 +268,68 @@ public class TransactionConsumerWorker(
             : default;
     }
 
-    private async Task HandleTransactionAsync(
+    private async Task<HandleOutcome> HandleTransactionAsync(
         TransactionEvent data,
         Guid messageId,
         CancellationToken stoppingToken
     )
     {
+        var fingerprint = TransactionFingerprint.ComputeV1(
+            data.AccountId,
+            data.SequenceNumber,
+            data.OccurredAt,
+            data.AmountMinor,
+            data.Currency
+        );
+
         await using var db = await contextFactory.CreateDbContextAsync(stoppingToken);
 
-        if (await db.Transactions.AnyAsync(r => r.MessageId == messageId, stoppingToken))
+        var existing = await db.Transactions.FirstOrDefaultAsync(
+            r => r.MessageId == messageId,
+            stoppingToken
+        );
+        if (existing is not null)
         {
-            logger.LogDebug("Duplicate MessageId {MessageId} skipped.", messageId);
-            metrics.RecordDuplicate("select");
-            return;
+            // A Kafka replay is a no-op only when the immutable content matches. Differing
+            // content under one MessageId is a deterministic conflict for the DLQ, never an
+            // overwrite and never a silent duplicate.
+            if (existing.PayloadFingerprint.SequenceEqual(fingerprint))
+            {
+                logger.LogDebug("Duplicate MessageId {MessageId} skipped.", messageId);
+                metrics.RecordDuplicate("select");
+                return HandleOutcome.Duplicate;
+            }
+
+            logger.LogWarning(
+                "Conflicting immutable content for MessageId {MessageId}; routing to DLQ.",
+                messageId
+            );
+            return HandleOutcome.Conflict;
         }
 
-        var modelAdvanced = false;
-        MachineHealthResult result;
+        var detectorAdvanced = false;
+        var reviewRecommended = false;
+        AmountSpikeResult spike;
+        VelocitySnapshot velocity;
 
         try
         {
-            // INTERIM detector input: the raw minor-unit amount as a float. The temperature
-            // artifact's scale is meaningless on money; the policy port regenerates an
-            // amount-feature artifact with a shared log transform and (AccountId, Currency)
-            // isolation instead of renaming the old binary.
-            result = await modelEngine.InspectAsync(
+            spike = await spikeDetector.InspectAsync(
                 data.AccountId,
-                (float)data.AmountMinor,
+                data.Currency,
+                data.AmountMinor,
                 async cancellationToken =>
                 {
                     var history = await db
-                        .Transactions.Where(r => r.AccountId == data.AccountId)
-                        // Reconstruct the order in which this stateful detector consumed rows.
-                        // Origin clocks may jump, so event time is not a safe processing order.
+                        .Transactions.Where(r =>
+                            r.AccountId == data.AccountId && r.Currency == data.Currency
+                        )
+                        // Warm in detector processing order: recent decisions first, which
+                        // reproduces consumption order even when source clocks jump.
                         .OrderByDescending(r => r.DetectedAt)
                         .ThenByDescending(r => r.Id)
-                        .Take(ModelEngine.HistoryLength)
-                        .Select(r => (float)r.AmountMinor)
+                        .Take(AmountSpikeDetector.HistoryLength)
+                        .Select(r => r.AmountMinor)
                         .ToListAsync(cancellationToken);
 
                     history.Reverse();
@@ -282,18 +337,64 @@ public class TransactionConsumerWorker(
                 },
                 stoppingToken
             );
-            modelAdvanced = true;
+            detectorAdvanced = true;
+
+            // Velocity is derived cache state: any failure degrades to Unavailable instead of
+            // failing the message, rewinding the offset, or touching the DLQ. Caller
+            // cancellation still propagates.
+            try
+            {
+                velocity = await velocityStore.ObserveAsync(
+                    data.AccountId,
+                    data.Currency,
+                    messageId,
+                    data.AmountMinor,
+                    data.OccurredAt,
+                    stoppingToken
+                );
+            }
+            catch (Exception velocityException)
+                when (velocityException is not OperationCanceledException)
+            {
+                logger.LogWarning(
+                    velocityException,
+                    "Velocity unavailable for {AccountId}; scoring from remaining signals.",
+                    data.AccountId
+                );
+                velocity = VelocitySnapshot.Unavailable();
+            }
+
+            if (velocity.Status == VelocityStatus.Unavailable)
+            {
+                logger.LogDebug(
+                    "Velocity {Status} for {AccountId}; persisting null evidence.",
+                    velocity.Status,
+                    data.AccountId
+                );
+            }
+
+            var decision = RiskPolicyEvaluator.Evaluate(
+                data,
+                spike,
+                velocity,
+                riskPolicyOptions.Value,
+                _policyConfigurationHash
+            );
+            reviewRecommended = decision.ReviewRecommended;
 
             logger.LogDebug(
-                "ML - ID: {Id}, Seq: {Seq}, Amount: {Amount}, IsAnomaly: {IsAnomaly}, Score: {Score:F4}, P-Value: {PVal:F4}, Lag: {Lag:F1}s",
+                "Decision - ID: {Id}, Seq: {Seq}, Amount: {Amount}, Score: {Score}, Review: {Review}, Lag: {Lag:F1}s",
                 data.AccountId,
                 data.SequenceNumber,
                 data.AmountMinor,
-                result.IsAnomaly,
-                result.Score,
-                result.PValue,
+                decision.RiskScore,
+                decision.ReviewRecommended,
                 (data.ReceivedAt - data.OccurredAt).TotalSeconds
             );
+
+            // One clock call: the stored transaction, the outbox CreatedAt, and the alert
+            // payload all share this exact instant.
+            var detectedAt = timeProvider.GetUtcNow();
 
             var transaction = new MonitoredTransaction
             {
@@ -302,30 +403,73 @@ public class TransactionConsumerWorker(
                 SequenceNumber = data.SequenceNumber,
                 OccurredAt = data.OccurredAt,
                 ReceivedAt = data.ReceivedAt,
+                DetectedAt = detectedAt,
                 AmountMinor = data.AmountMinor,
                 Currency = data.Currency,
-                IsAnomaly = result.IsAnomaly,
-                DetectorScore = result.Score,
-                DetectorPValue = result.PValue,
-                DetectorHistoryCount = result.HistoryCount,
-                DetectorVersion = result.DetectorVersion,
+                PayloadFingerprint = fingerprint,
+                FingerprintVersion = TransactionFingerprint.Version,
+                RiskScore = decision.RiskScore,
+                ReviewRecommended = decision.ReviewRecommended,
+                ReasonsJson = JsonSerializer.Serialize(decision.Reasons, TransactionJson.Options),
+                VelocityStatus = velocity.Status.ToString(),
+                Count1m = velocity.Count1m,
+                Amount5mMinor = velocity.Amount5mMinor,
+                DetectorIsSpike = spike.IsSpike,
+                DetectorRawScore = spike.RawScore,
+                DetectorPValue = spike.PValue,
+                DetectorHistoryCount = spike.HistoryCount,
+                DetectorVersion = spike.DetectorVersion,
+                PolicyVersion = decision.PolicyVersion,
+                PolicyConfigurationHash = decision.PolicyConfigurationHash,
             };
 
             db.Transactions.Add(transaction);
 
-            if (result.IsAnomaly)
+            if (decision.ReviewRecommended)
             {
-                // The outbox row carries the complete observed event. The publisher forwards
-                // it unchanged; the full RiskAlert decision envelope replaces this interim
-                // payload with the policy port.
                 db.AlertOutboxMessages.Add(
                     new AlertOutboxMessage
                     {
                         MessageId = messageId,
                         AccountId = data.AccountId,
-                        Payload = JsonSerializer.Serialize(data, TransactionJson.Options),
+                        Payload = JsonSerializer.Serialize(
+                            new RiskAlert(
+                                data.MessageId,
+                                data.AccountId,
+                                data.SequenceNumber,
+                                data.OccurredAt,
+                                data.ReceivedAt,
+                                detectedAt,
+                                data.AmountMinor,
+                                data.Currency,
+                                decision.RiskScore,
+                                decision.ReviewRecommended,
+                                decision.Reasons,
+                                velocity.Status,
+                                velocity.Status == VelocityStatus.Available
+                                    ? new VelocityEvidence(
+                                        velocity.Count1m!.Value.ToString(
+                                            CultureInfo.InvariantCulture
+                                        ),
+                                        velocity.Amount5mMinor!.Value.ToString(
+                                            CultureInfo.InvariantCulture
+                                        )
+                                    )
+                                    : null,
+                                new DetectorEvidence(
+                                    spike.IsSpike,
+                                    spike.RawScore,
+                                    spike.PValue,
+                                    spike.HistoryCount,
+                                    spike.DetectorVersion
+                                ),
+                                decision.PolicyVersion,
+                                decision.PolicyConfigurationHash
+                            ),
+                            TransactionJson.Options
+                        ),
                         TraceParent = Activity.Current?.Id,
-                        CreatedAt = transaction.DetectedAt,
+                        CreatedAt = detectedAt,
                     }
                 );
             }
@@ -337,32 +481,40 @@ public class TransactionConsumerWorker(
         catch (DbUpdateException ex)
             when (ex.InnerException is PostgresException { SqlState: "23505" })
         {
-            if (modelAdvanced)
-                modelEngine.Invalidate(data.AccountId);
+            if (detectorAdvanced)
+                spikeDetector.Invalidate(data.AccountId, data.Currency);
 
-            // Several unique indexes exist. Treat the exception as idempotent success only if
-            // another transaction actually persisted this transaction MessageId.
+            // A unique race means another transaction won. It is idempotent success only when
+            // the winner carries the same immutable content; otherwise it is a conflict.
             await using var verificationDb = await contextFactory.CreateDbContextAsync(
                 stoppingToken
             );
-            if (
-                await verificationDb.Transactions.AnyAsync(
-                    r => r.MessageId == messageId,
-                    stoppingToken
-                )
-            )
+            var winner = await verificationDb.Transactions.FirstOrDefaultAsync(
+                r => r.MessageId == messageId,
+                stoppingToken
+            );
+            if (winner is not null && winner.PayloadFingerprint.SequenceEqual(fingerprint))
             {
                 logger.LogDebug("Duplicate MessageId {MessageId} rejected by index.", messageId);
                 metrics.RecordDuplicate("index");
-                return;
+                return HandleOutcome.Duplicate;
+            }
+
+            if (winner is not null)
+            {
+                logger.LogWarning(
+                    "Conflicting immutable content for MessageId {MessageId}; routing to DLQ.",
+                    messageId
+                );
+                return HandleOutcome.Conflict;
             }
 
             throw;
         }
         catch
         {
-            if (modelAdvanced)
-                modelEngine.Invalidate(data.AccountId);
+            if (detectorAdvanced)
+                spikeDetector.Invalidate(data.AccountId, data.Currency);
             throw;
         }
 
@@ -370,10 +522,12 @@ public class TransactionConsumerWorker(
 
         metrics.Lag.Record((DateTimeOffset.UtcNow - data.OccurredAt).TotalSeconds);
 
-        if (result.IsAnomaly)
+        if (reviewRecommended)
         {
             metrics.Anomalies.Add(1);
         }
+
+        return HandleOutcome.Processed;
     }
 
     // Only deterministic validation failures reach the DLQ-before-commit path. Kafka,

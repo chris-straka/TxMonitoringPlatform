@@ -6,7 +6,7 @@ help:
 		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2}'
 
 # .PHONY tells Make these are cmd names, not files on my hard drive
-.PHONY: help fleet dev k8s compose-up up upd down clean train restore test frontend ls migrate db-update db-check db-rows logs infra-up run-api run-worker run-em run-gw infra-validate infra-init infra-plan infra-apply infra-destroy \
+.PHONY: help fleet dev k8s compose-up up upd down clean build-detector restore test frontend ls migrate db-update db-check db-rows logs infra-up run-api run-worker run-em run-gw infra-validate infra-init infra-plan infra-apply infra-destroy \
 	chaos-cloud-down chaos-cloud-up chaos-gateway-kill queue verify e2e demo-help
 
 dev: ## Tilt dev loop
@@ -27,7 +27,7 @@ down: ## docker compose down
 clean: ## docker compose down -v (WIPES all local data, observability history, and dev PKI)
 	docker compose down -v
 
-train: ## rebuild the online IID detector configuration in model.zip
+build-detector: ## rebuild the online IID spike-detector configuration in model.zip (amount feature)
 	dotnet run --project src/TxMonitoring.ML.DetectorBuilder
 
 # Downloads dependencies for each project (since we're at the root .slnx)

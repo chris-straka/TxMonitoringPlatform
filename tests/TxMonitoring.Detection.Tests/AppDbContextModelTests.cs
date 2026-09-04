@@ -25,7 +25,7 @@ public sealed class AppDbContextModelTests
                 [nameof(AlertOutboxMessage.PublishedAt), nameof(AlertOutboxMessage.CreatedAt)]
             )
         );
-        Assert.Contains("20260904191837_InitialCreate", db.Database.GetMigrations());
+        Assert.Contains("20260904194005_DecisionEvidence", db.Database.GetMigrations());
     }
 
     [Fact]

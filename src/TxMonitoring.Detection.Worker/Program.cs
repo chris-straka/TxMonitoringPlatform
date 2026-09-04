@@ -45,6 +45,11 @@ builder
     .Bind(builder.Configuration.GetSection(RiskPolicyOptions.Section))
     .ValidateDataAnnotations()
     .ValidateOnStart();
+builder
+    .Services.AddOptions<VelocityOptions>()
+    .Bind(builder.Configuration.GetSection(VelocityOptions.Section))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
 // Needed during registration, before the sp container exists.
 var otel = builder.Configuration.GetSection(OTelOptions.Section).Get<OTelOptions>()!;
 var kafka = builder.Configuration.GetSection(KafkaOptions.Section).Get<KafkaOptions>()!;
@@ -140,9 +145,15 @@ builder.Services.AddSingleton(
 // One clock for the process; unit tests substitute a manual TimeProvider.
 builder.Services.AddSingleton(TimeProvider.System);
 
-// Redis velocity arrives with its own store; until then every observation degrades to
-// Unavailable and decisions score from the remaining signals.
-builder.Services.AddSingleton<IVelocityStore, UnavailableVelocityStore>();
+// Sliding-window velocity over Redis. The store degrades internally when Redis is
+// unreachable, so ingestion and Postgres never depend on it being up.
+builder.Services.AddSingleton<RedisConnection>();
+builder.Services.AddSingleton<ITransactionHistoryRepository, TransactionHistoryRepository>();
+builder.Services.AddSingleton<IVelocityStore, RedisVelocityStore>();
+
+// The warmup runs before the consumer so windows are pre-materialized; it exits after
+// one pass and sets no rebuilt flags, leaving per-key completion to the lazy path.
+builder.Services.AddHostedService<VelocityWarmupWorker>();
 
 // A hosted service, so the consume loop follows the app lifecycle without blocking it.
 builder.Services.AddHostedService<TransactionConsumerWorker>();

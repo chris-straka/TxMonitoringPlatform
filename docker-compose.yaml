@@ -163,6 +163,7 @@ services:
       - Kafka__EventsTopic=transaction-events
       - Kafka__AlertsTopic=risk-alerts
       - Kafka__DeadLetterTopic=transaction-events-dlq
+      - Velocity__Configuration=redis:6379
       - Kafka__ReadinessTimeoutSeconds=3
       - OTel__ServiceName=TxMonitoring.Detection.Worker
       - OTel__Endpoint=http://otel-collector:4317
@@ -230,6 +231,19 @@ services:
     depends_on:
       capture-gateway:
         condition: service_healthy
+
+  # Derived velocity state only: ingestion, Kafka consumption, and the Postgres write
+  # never depend on this being up. Losing it loses accuracy for a window, never a tx.
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "no", "--save", ""]
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
 
   postgres:
     image: postgres:18

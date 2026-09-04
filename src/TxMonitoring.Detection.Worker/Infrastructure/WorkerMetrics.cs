@@ -53,6 +53,12 @@ public sealed class WorkerMetrics : IDisposable
             description: "Readings the model flagged as anomalous."
         );
 
+        VelocityUnavailable = _meter.CreateCounter<long>(
+            "detection.velocity.unavailable",
+            unit: "{observation}",
+            description: "Velocity observations that degraded to Unavailable instead of failing the message."
+        );
+
         AlertFailures = _meter.CreateCounter<long>(
             "worker.alert.failures",
             unit: "{attempt}",
@@ -93,6 +99,7 @@ public sealed class WorkerMetrics : IDisposable
     public Counter<long> DeadLetterFailures { get; }
     public Counter<long> Anomalies { get; }
     public Counter<long> AlertFailures { get; }
+    public Counter<long> VelocityUnavailable { get; }
     public Counter<long> AlertsPublished { get; }
     public Histogram<double> Lag { get; }
 

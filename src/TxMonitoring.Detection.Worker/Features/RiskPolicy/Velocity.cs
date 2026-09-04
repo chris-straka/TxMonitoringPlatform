@@ -47,20 +47,3 @@ public interface IVelocityStore
         CancellationToken cancellationToken
     );
 }
-
-/// <summary>
-/// Degraded-mode velocity: Redis is not wired (or is unreachable), so every observation
-/// reports <see cref="VelocityStatus.Unavailable"/> and decisions score from the remaining
-/// signals. Losing velocity loses accuracy for a window, never a transaction.
-/// </summary>
-public sealed class UnavailableVelocityStore : IVelocityStore
-{
-    public Task<VelocitySnapshot> ObserveAsync(
-        string accountId,
-        string currency,
-        Guid messageId,
-        long amountMinor,
-        DateTimeOffset occurredAt,
-        CancellationToken cancellationToken
-    ) => Task.FromResult(VelocitySnapshot.Unavailable());
-}

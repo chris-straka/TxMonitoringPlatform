@@ -29,6 +29,7 @@ public class TransactionConsumerWorker(
     DetectionConsumerReadiness readiness,
     AmountSpikeDetector spikeDetector,
     IVelocityStore velocityStore,
+    ITransactionHistoryRepository historyRepository,
     TimeProvider timeProvider,
     WorkerMetrics metrics
 ) : BackgroundService
@@ -320,20 +321,16 @@ public class TransactionConsumerWorker(
                 data.AmountMinor,
                 async cancellationToken =>
                 {
-                    var history = await db
-                        .Transactions.Where(r =>
-                            r.AccountId == data.AccountId && r.Currency == data.Currency
-                        )
-                        // Warm in detector processing order: recent decisions first, which
-                        // reproduces consumption order even when source clocks jump.
-                        .OrderByDescending(r => r.DetectedAt)
-                        .ThenByDescending(r => r.Id)
-                        .Take(AmountSpikeDetector.HistoryLength)
-                        .Select(r => r.AmountMinor)
-                        .ToListAsync(cancellationToken);
+                    // The detector and velocity warm paths share this repository page, so a
+                    // restart warms both from the same recent rows in detection order.
+                    var recent = await historyRepository.LoadRecentAsync(
+                        data.AccountId,
+                        data.Currency,
+                        AmountSpikeDetector.HistoryLength,
+                        cancellationToken
+                    );
 
-                    history.Reverse();
-                    return history;
+                    return recent.Select(r => r.AmountMinor).Reverse().ToList();
                 },
                 stoppingToken
             );

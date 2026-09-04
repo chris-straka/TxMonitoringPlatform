@@ -31,6 +31,13 @@ public class GrpcOptions
     /// </summary>
     [Range(65_536, 67_108_864)]
     public int MaxReceiveMessageSizeBytes { get; set; } = DefaultMaxReceiveMessageSizeBytes;
+
+    /// <summary>
+    /// A missing section binds nothing, so fall back to code defaults instead of
+    /// returning null into startup wiring that dereferences the result.
+    /// </summary>
+    internal static GrpcOptions Read(Microsoft.Extensions.Configuration.IConfiguration configuration) =>
+        configuration.GetSection(Section).Get<GrpcOptions>() ?? new GrpcOptions();
 }
 
 public sealed class TransportSecurityOptions : IValidatableObject

@@ -47,7 +47,7 @@ files=$(git ls-files --cached --others --exclude-standard -- "${@:-.}" \
   # the shape of the repo before the contents scroll past.
   printf '# %s\n\n' "$(basename "$PWD")"
   printf '_%s files, generated %s_\n\n' "$(echo "$files" | wc -l | tr -d ' ')" "$(date -u '+%Y-%m-%dT%H:%MZ')"
-  printf '## Manifest\n\n```\n%s\n```\n' "$files"
+  printf "## Manifest\n\n\`\`\`\n%s\n\`\`\`\n" "$files"
 
   echo "$files" | while read -r file; do
     [ -f "$file" ] || continue

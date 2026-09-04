@@ -67,7 +67,7 @@ builder
 
 var otel = builder.Configuration.GetSection(OTelOptions.Section).Get<OTelOptions>()!;
 var kafka = builder.Configuration.GetSection(KafkaOptions.Section).Get<KafkaOptions>()!;
-var grpc = builder.Configuration.GetSection(GrpcOptions.Section).Get<GrpcOptions>()!;
+var grpc = GrpcOptions.Read(builder.Configuration);
 var transportSecurity =
     builder.Configuration.GetSection(TransportSecurityOptions.Section)
         .Get<TransportSecurityOptions>() ?? new TransportSecurityOptions();

@@ -80,7 +80,7 @@ jobs:
             --set istio.enabled=true \
             --set transportSecurity.enabled=true \
             --set transportSecurity.ingestion.secretName=ci-ingestion-mtls \
-            --set transportSecurity.edgeGateway.secretName=ci-edge-mtls
+            --set transportSecurity.captureGateway.secretName=ci-capture-mtls
           helm lint chart \
             --set externalSecret.enabled=true \
             --set externalSecret.remoteRefs.postgresConnectionString.key=ci/postgres-connection \
@@ -88,7 +88,7 @@ jobs:
             --set istio.enabled=true \
             --set transportSecurity.enabled=true \
             --set transportSecurity.ingestion.secretName=ci-ingestion-mtls \
-            --set transportSecurity.edgeGateway.secretName=ci-edge-mtls
+            --set transportSecurity.captureGateway.secretName=ci-capture-mtls
 
   e2e:
     needs: verify

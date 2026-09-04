@@ -103,6 +103,7 @@ builder
     .WithLogging(logging => logging.AddOtlpExporter(opt => opt.Endpoint = new Uri(otel.Endpoint)))
     .WithMetrics(metrics =>
         metrics
+            .AddMeter(IngestionMetrics.MeterName)
             .AddAspNetCoreInstrumentation()
             .AddHttpClientInstrumentation()
             .AddRuntimeInstrumentation()
@@ -114,6 +115,8 @@ builder
             .AddHttpClientInstrumentation()
             .AddOtlpExporter(opt => opt.Endpoint = new Uri(otel.Endpoint))
     );
+
+builder.Services.AddSingleton<IngestionMetrics>();
 
 builder.Services.AddValidatorsFromAssemblyContaining<TransactionRecordValidator>();
 

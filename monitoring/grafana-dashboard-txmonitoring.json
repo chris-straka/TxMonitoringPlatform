@@ -92,14 +92,14 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "min(edge_cloud_reachable)",
+          "expr": "min(capture_ingestion_reachable)",
           "instant": true,
           "legendFormat": "Cloud reachable",
           "range": false,
           "refId": "A"
         }
       ],
-      "title": "Edge → Cloud",
+      "title": "Gateway → Ingestion",
       "type": "stat"
     },
     {
@@ -159,14 +159,14 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum(edge_queue_depth)",
+          "expr": "sum(capture_transaction_buffer_depth)",
           "instant": false,
           "legendFormat": "Buffered readings",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Durable Edge Backlog",
+      "title": "Durable Gateway Backlog",
       "type": "stat"
     },
     {
@@ -226,14 +226,14 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "max(edge_oldest_message_age_seconds)",
+          "expr": "max(capture_transaction_oldest_age_seconds)",
           "instant": false,
           "legendFormat": "Oldest reading",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Oldest Edge Reading",
+      "title": "Oldest Gateway Transaction",
       "type": "stat"
     },
     {
@@ -360,35 +360,35 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum(rate(sensor_telemetry_acquired_total[$__rate_interval]))",
+          "expr": "sum(rate(feed_transaction_acquired_total[$__rate_interval]))",
           "legendFormat": "Sensor acquired",
           "range": true,
           "refId": "A"
         },
         {
           "editorMode": "code",
-          "expr": "sum(rate(sensor_telemetry_sent_total[$__rate_interval]))",
+          "expr": "sum(rate(feed_transaction_sent_total[$__rate_interval]))",
           "legendFormat": "Gateway accepted",
           "range": true,
           "refId": "B"
         },
         {
           "editorMode": "code",
-          "expr": "sum(rate(edge_telemetry_uploaded_total[$__rate_interval]))",
+          "expr": "sum(rate(capture_transaction_uploaded_total[$__rate_interval]))",
           "legendFormat": "Ingestion acknowledged",
           "range": true,
           "refId": "C"
         },
         {
           "editorMode": "code",
-          "expr": "sum(rate(worker_telemetry_persisted_total[$__rate_interval]))",
+          "expr": "sum(rate(detection_transaction_persisted_total[$__rate_interval]))",
           "legendFormat": "Postgres persisted",
           "range": true,
           "refId": "D"
         },
         {
           "editorMode": "code",
-          "expr": "sum(rate(web_messages_relayed_total{messaging_destination_name=\"telemetry-events\"}[$__rate_interval]))",
+          "expr": "sum(rate(web_messages_relayed_total{messaging_destination_name=\"transaction-events\"}[$__rate_interval]))",
           "legendFormat": "Telemetry relayed",
           "range": true,
           "refId": "E"
@@ -453,35 +453,35 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum(rate(sensor_telemetry_dropped_total[$__rate_interval]))",
+          "expr": "sum(rate(feed_transaction_dropped_total[$__rate_interval]))",
           "legendFormat": "Sensor RAM full",
           "range": true,
           "refId": "A"
         },
         {
           "editorMode": "code",
-          "expr": "sum(rate(sensor_telemetry_delivery_dropped_total[$__rate_interval]))",
+          "expr": "sum(rate(feed_transaction_delivery_dropped_total[$__rate_interval]))",
           "legendFormat": "Sensor delivery expired",
           "range": true,
           "refId": "B"
         },
         {
           "editorMode": "code",
-          "expr": "sum(rate(edge_telemetry_shed_total[$__rate_interval]))",
+          "expr": "sum(rate(capture_transaction_shed_total[$__rate_interval]))",
           "legendFormat": "Edge capacity shed",
           "range": true,
           "refId": "C"
         },
         {
           "editorMode": "code",
-          "expr": "sum(rate(edge_telemetry_rejected_total[$__rate_interval]))",
+          "expr": "sum(rate(capture_transaction_rejected_total[$__rate_interval]))",
           "legendFormat": "Cloud rejected / quarantined",
           "range": true,
           "refId": "D"
         },
         {
           "editorMode": "code",
-          "expr": "sum(rate(edge_telemetry_malformed_total[$__rate_interval]))",
+          "expr": "sum(rate(capture_transaction_malformed_total[$__rate_interval]))",
           "legendFormat": "Malformed at edge",
           "range": true,
           "refId": "E"
@@ -562,20 +562,20 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum(edge_queue_depth)",
+          "expr": "sum(capture_transaction_buffer_depth)",
           "legendFormat": "Buffered readings",
           "range": true,
           "refId": "A"
         },
         {
           "editorMode": "code",
-          "expr": "max(edge_oldest_message_age_seconds)",
+          "expr": "max(capture_transaction_oldest_age_seconds)",
           "legendFormat": "Oldest age",
           "range": true,
           "refId": "B"
         }
       ],
-      "title": "Edge Queue Health",
+      "title": "Gateway Queue Health",
       "type": "timeseries"
     },
     {
@@ -635,27 +635,27 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum by (outcome) (rate(edge_upload_failures_total[$__rate_interval]))",
+          "expr": "sum by (outcome) (rate(capture_upload_failures_total[$__rate_interval]))",
           "legendFormat": "Failure: {{outcome}}",
           "range": true,
           "refId": "A"
         },
         {
           "editorMode": "code",
-          "expr": "sum(rate(edge_telemetry_uploaded_total[$__rate_interval]))",
+          "expr": "sum(rate(capture_transaction_uploaded_total[$__rate_interval]))",
           "legendFormat": "Accepted readings",
           "range": true,
           "refId": "B"
         },
         {
           "editorMode": "code",
-          "expr": "sum(rate(edge_telemetry_rejected_total[$__rate_interval]))",
+          "expr": "sum(rate(capture_transaction_rejected_total[$__rate_interval]))",
           "legendFormat": "Permanently rejected readings",
           "range": true,
           "refId": "C"
         }
       ],
-      "title": "Edge Upload Outcomes",
+      "title": "Gateway Upload Outcomes",
       "type": "timeseries"
     },
     {
@@ -715,34 +715,34 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum(rate(worker_telemetry_consumed_total[$__rate_interval]))",
+          "expr": "sum(rate(detection_transaction_consumed_total[$__rate_interval]))",
           "legendFormat": "Consumed",
           "range": true,
           "refId": "A"
         },
         {
           "editorMode": "code",
-          "expr": "sum(rate(worker_telemetry_persisted_total[$__rate_interval]))",
+          "expr": "sum(rate(detection_transaction_persisted_total[$__rate_interval]))",
           "legendFormat": "Persisted",
           "range": true,
           "refId": "B"
         },
         {
           "editorMode": "code",
-          "expr": "sum(rate(worker_telemetry_processing_failures_total[$__rate_interval]))",
+          "expr": "sum(rate(detection_transaction_processing_failures_total[$__rate_interval]))",
           "legendFormat": "Failed / rewound",
           "range": true,
           "refId": "C"
         },
         {
           "editorMode": "code",
-          "expr": "sum by (detected_by) (rate(worker_telemetry_duplicate_total[$__rate_interval]))",
+          "expr": "sum by (detected_by) (rate(detection_transaction_duplicate_total[$__rate_interval]))",
           "legendFormat": "Duplicate: {{detected_by}}",
           "range": true,
           "refId": "D"
         }
       ],
-      "title": "Diagnostics Processing",
+      "title": "Detection Processing",
       "type": "timeseries"
     },
     {
@@ -802,14 +802,14 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum(rate(worker_telemetry_dead_letter_published_total[$__rate_interval]))",
+          "expr": "sum(rate(detection_transaction_dead_letter_published_total[$__rate_interval]))",
           "legendFormat": "DLQ published",
           "range": true,
           "refId": "A"
         },
         {
           "editorMode": "code",
-          "expr": "sum(rate(worker_telemetry_dead_letter_failures_total[$__rate_interval]))",
+          "expr": "sum(rate(detection_transaction_dead_letter_failures_total[$__rate_interval]))",
           "legendFormat": "DLQ publish failed",
           "range": true,
           "refId": "B"
@@ -889,14 +889,14 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum(rate(http_server_request_duration_seconds_count{job=\"Industrial.Ingestion.Api\"}[$__rate_interval]))",
+          "expr": "sum(rate(http_server_request_duration_seconds_count{job=\"TxMonitoring.Ingestion.Api\"}[$__rate_interval]))",
           "legendFormat": "All ingestion requests",
           "range": true,
           "refId": "A"
         },
         {
           "editorMode": "code",
-          "expr": "sum(rate(http_server_request_duration_seconds_count{job=\"Industrial.Ingestion.Api\", http_response_status_code=~\"5..\"}[$__rate_interval]))",
+          "expr": "sum(rate(http_server_request_duration_seconds_count{job=\"TxMonitoring.Ingestion.Api\", http_response_status_code=~\"5..\"}[$__rate_interval]))",
           "legendFormat": "Ingestion 5xx",
           "range": true,
           "refId": "B"
@@ -962,21 +962,21 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(0.50, sum by (le) (rate(worker_telemetry_lag_seconds_bucket[$__rate_interval])))",
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(detection_transaction_lag_seconds_bucket[$__rate_interval])))",
           "legendFormat": "p50",
           "range": true,
           "refId": "A"
         },
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(worker_telemetry_lag_seconds_bucket[$__rate_interval])))",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(detection_transaction_lag_seconds_bucket[$__rate_interval])))",
           "legendFormat": "p95",
           "range": true,
           "refId": "B"
         },
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(0.99, sum by (le) (rate(worker_telemetry_lag_seconds_bucket[$__rate_interval])))",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(detection_transaction_lag_seconds_bucket[$__rate_interval])))",
           "legendFormat": "p99",
           "range": true,
           "refId": "C"
@@ -1042,35 +1042,42 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum(rate(worker_anomaly_detected_total[$__rate_interval]))",
-          "legendFormat": "Anomalies detected",
+          "expr": "sum(rate(detection_reviews_recommended_total[$__rate_interval]))",
+          "legendFormat": "Reviews recommended",
           "range": true,
           "refId": "A"
         },
         {
           "editorMode": "code",
-          "expr": "sum(rate(worker_ai_failures_total[$__rate_interval]))",
-          "legendFormat": "AI enrichment failures",
+          "expr": "sum by (rule) (rate(detection_policy_rule_fired_total[$__rate_interval]))",
+          "legendFormat": "Rule fired: {{rule}}",
           "range": true,
           "refId": "B"
+        },
+        {
+          "editorMode": "code",
+          "expr": "sum(rate(detection_velocity_unavailable_total[$__rate_interval]))",
+          "legendFormat": "Velocity unavailable",
+          "range": true,
+          "refId": "C"
         },
         {
           "editorMode": "code",
           "expr": "sum(rate(web_relay_failures_total[$__rate_interval]))",
           "legendFormat": "SignalR relay failures",
           "range": true,
-          "refId": "C"
+          "refId": "D"
         }
       ],
-      "title": "Anomaly & Dashboard Delivery",
+      "title": "Policy Reviews & Dashboard Delivery",
       "type": "timeseries"
     }
   ],
   "refresh": "15s",
   "schemaVersion": 39,
   "tags": [
-    "industrial-platform",
-    "telemetry",
+    "txmonitoring",
+    "transactions",
     "reliability"
   ],
   "templating": {
@@ -1101,8 +1108,8 @@
     ]
   },
   "timezone": "browser",
-  "title": "Industrial Platform Reliability",
-  "uid": "industrial-platform-reliability",
+  "title": "Transaction Monitoring Reliability",
+  "uid": "txmonitoring-reliability",
   "version": 1,
   "weekStart": ""
 }

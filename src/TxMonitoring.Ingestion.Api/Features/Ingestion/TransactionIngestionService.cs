@@ -10,6 +10,7 @@ using Grpc.Core;
 using Microsoft.Extensions.Options;
 
 using TxMonitoring.Ingestion.Api.Configuration;
+using TxMonitoring.Ingestion.Api.Infrastructure;
 using TxMonitoring.Ingestion.V1;
 using TxMonitoring.Shared;
 
@@ -22,6 +23,7 @@ public class TransactionIngestionService(
     IProducer<string, string> kafkaProducer,
     IValidator<TransactionRecord> validator,
     IOptions<KafkaOptions> kafkaOptions,
+    IngestionMetrics metrics,
     ILogger<TransactionIngestionService> logger
 ) : TransactionIngestion.TransactionIngestionBase
 {
@@ -64,6 +66,7 @@ public class TransactionIngestionService(
                 );
 
                 rejected.Add(record.MessageId);
+                metrics.Rejected.Add(1);
                 continue;
             }
 
@@ -134,6 +137,7 @@ public class TransactionIngestionService(
                 if (result.Status == PersistenceStatus.Persisted)
                 {
                     accepted.Add(messageId);
+                    metrics.Produced.Add(1);
                 }
                 else
                 {
@@ -159,6 +163,8 @@ public class TransactionIngestionService(
                 firstFailure ??= ex;
             }
         }
+
+        metrics.Failed.Add(undelivered);
 
         // One line, because an outage fails all records and buries the log
         if (undelivered > 0)

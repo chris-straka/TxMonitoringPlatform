@@ -10,7 +10,7 @@ namespace TxMonitoring.Capture.Gateway.Infrastructure;
 /// <remarks>
 /// A Counter only climbs and is read as a rate; a Gauge is a level that moves both ways
 ///
-/// Depth and oldest-message-age are the gauges that make an outage visible
+/// Depth and oldest-transaction-age are the gauges that make an outage visible
 /// They climb during an outage and drain once there's no more outage
 ///
 /// Queue depth is the one value this class does not own, because it also steers load shedding
@@ -28,22 +28,22 @@ public sealed class EdgeMetrics : IDisposable
     // NaN means nothing is buffered, so there is no age to report
     // A companion bool would need two volatile reads that can disagree, and this needs one
     private double _oldestAgeSeconds = double.NaN;
-    private int _cloudReachable = 1;
+    private int _ingestionReachable = 1;
 
     public EdgeMetrics(BufferDepth bufferDepth)
     {
         _meter = new Meter(MeterName);
 
         Received = _meter.CreateCounter<long>(
-            "edge.telemetry.received",
-            unit: "{reading}",
-            description: "Readings durably written to the local buffer."
+            "capture.transaction.received",
+            unit: "{transaction}",
+            description: "Transactions durably written to the local buffer."
         );
 
         Duplicates = _meter.CreateCounter<long>(
-            "edge.telemetry.duplicate",
-            unit: "{reading}",
-            description: "Readings acknowledged as duplicates because the MessageId was buffered, recently settled, or quarantined."
+            "capture.transaction.duplicate",
+            unit: "{transaction}",
+            description: "Transactions acknowledged as duplicates because the MessageId was buffered, recently settled, or quarantined."
         );
 
         IdempotencyConflicts = _meter.CreateCounter<long>(
@@ -53,40 +53,41 @@ public sealed class EdgeMetrics : IDisposable
         );
 
         Uploaded = _meter.CreateCounter<long>(
-            "edge.telemetry.uploaded",
-            unit: "{reading}",
-            description: "Readings the cloud durably acknowledged."
+            "capture.transaction.uploaded",
+            unit: "{transaction}",
+            description: "Transactions ingestion durably acknowledged."
         );
 
         Shed = _meter.CreateCounter<long>(
-            "edge.telemetry.shed",
-            unit: "{reading}",
-            description: "Readings rejected with 429 because the local buffer hit its ceiling."
+            "capture.transaction.shed",
+            unit: "{transaction}",
+            description: "Transactions rejected with 429 because the local buffer hit its ceiling."
         );
 
-        // A 400 never reaches edge.telemetry.received, so without this a rejected reading looks like one the sensor never sent
+        // A 400 never reaches capture.transaction.received, so without this a rejected
+        // transaction looks like one the generator never sent
         Malformed = _meter.CreateCounter<long>(
-            "edge.telemetry.malformed",
-            unit: "{reading}",
-            description: "Readings rejected with 400 because an identity, sequence, timestamp, or measurement was invalid."
+            "capture.transaction.malformed",
+            unit: "{transaction}",
+            description: "Transactions rejected with 400 because an identity, sequence, timestamp, amount, or currency was invalid."
         );
 
         Rejected = _meter.CreateCounter<long>(
-            "edge.telemetry.rejected",
-            unit: "{reading}",
-            description: "Readings dropped because the cloud named them as permanently refused."
+            "capture.transaction.rejected",
+            unit: "{transaction}",
+            description: "Transactions dropped because ingestion named them as permanently refused."
         );
 
-        // Tagged by outcome, because an unreachable cloud and one refusing this caller
+        // Tagged by outcome, because unreachable ingestion and ingestion refusing this caller
         // are one climbing line otherwise, and they need different people to fix them
         _uploadFailures = _meter.CreateCounter<long>(
-            "edge.upload.failures",
+            "capture.upload.failures",
             unit: "{attempt}",
             description: "Upload attempts that ended without a full acknowledgement."
         );
 
         _uploadDuration = _meter.CreateHistogram<double>(
-            "edge.upload.duration",
+            "capture.upload.duration",
             unit: "ms",
             description: "Duration of one logical gRPC batch attempt, tagged by classified outcome."
         );
@@ -94,24 +95,24 @@ public sealed class EdgeMetrics : IDisposable
         // Observable means OTel calls this at collection time instead of us pushing values
         // The depth stays owned by BufferDepth, so losing this file costs dashboards, never the ceiling
         _meter.CreateObservableGauge(
-            "edge.queue.depth",
+            "capture.transaction.buffer_depth",
             () => bufferDepth.Current,
-            unit: "{reading}",
-            description: "Readings sitting in the local buffer awaiting cloud acknowledgement."
+            unit: "{transaction}",
+            description: "Transactions sitting in the local buffer awaiting ingestion acknowledgement."
         );
 
         _meter.CreateObservableGauge(
-            "edge.oldest.message.age",
-            ObserveOldestReadingAge,
+            "capture.transaction.oldest_age",
+            ObserveOldestTransactionAge,
             unit: "s",
-            description: "Age of the oldest unacknowledged reading. This is the real SLO."
+            description: "Age of the oldest unacknowledged transaction. This is the real SLO."
         );
 
-        // A gauge rather than a log line so it can be graphed beside the queue depth
+        // A gauge rather than a log line so it can be graphed beside the buffer depth
         _meter.CreateObservableGauge(
-            "edge.cloud.reachable",
-            () => Volatile.Read(ref _cloudReachable),
-            description: "1 when the last upload attempt reached the cloud, 0 otherwise."
+            "capture.ingestion.reachable",
+            () => Volatile.Read(ref _ingestionReachable),
+            description: "1 when the last upload attempt reached ingestion, 0 otherwise."
         );
     }
 
@@ -137,18 +138,18 @@ public sealed class EdgeMetrics : IDisposable
     // Volatile because the gauge callbacks read these on OTel's collection thread
     // A plain write can sit in a register the reader never sees, so the dashboard freezes on a stale value
     // Not Interlocked, which buys indivisible read-modify-write that neither of these does (docs/Concurrency.md)
-    public void SetOldestReadingAge(double seconds) =>
+    public void SetOldestTransactionAge(double seconds) =>
         Volatile.Write(ref _oldestAgeSeconds, seconds);
 
-    // An empty buffer has no oldest reading, which is not the same as one that is zero seconds old
-    public void NoReadingsBuffered() => Volatile.Write(ref _oldestAgeSeconds, double.NaN);
+    // An empty buffer has no oldest transaction, which is not the same as one that is zero seconds old
+    public void NoTransactionsBuffered() => Volatile.Write(ref _oldestAgeSeconds, double.NaN);
 
-    public void SetCloudReachable(bool reachable) =>
-        Volatile.Write(ref _cloudReachable, reachable ? 1 : 0);
+    public void SetIngestionReachable(bool reachable) =>
+        Volatile.Write(ref _ingestionReachable, reachable ? 1 : 0);
 
     // Yielding nothing leaves a gap in the series
-    // Reporting a zero would draw the same flat line as a reading that arrived this instant
-    private IEnumerable<Measurement<double>> ObserveOldestReadingAge()
+    // Reporting a zero would draw the same flat line as a transaction that arrived this instant
+    private IEnumerable<Measurement<double>> ObserveOldestTransactionAge()
     {
         var seconds = Volatile.Read(ref _oldestAgeSeconds);
 

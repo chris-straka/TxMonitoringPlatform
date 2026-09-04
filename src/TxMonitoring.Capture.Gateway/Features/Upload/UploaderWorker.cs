@@ -113,7 +113,7 @@ public class UploaderWorker(
 
                 var result = await UploadBatchAsync(grpcClient, batch, stoppingToken);
 
-                metrics.SetCloudReachable(result.Outcome != UploadOutcome.Unreachable);
+                metrics.SetIngestionReachable(result.Outcome != UploadOutcome.Unreachable);
 
                 switch (result.Outcome)
                 {
@@ -377,7 +377,7 @@ public class UploaderWorker(
     {
         if (bufferDepth.Current == 0)
         {
-            metrics.NoReadingsBuffered();
+            metrics.NoTransactionsBuffered();
             return;
         }
 
@@ -390,11 +390,11 @@ public class UploaderWorker(
         // DB is actually empty while our buffer is non-empty (b4 a sync)
         if (oldest is null)
         {
-            metrics.NoReadingsBuffered();
+            metrics.NoTransactionsBuffered();
             return;
         }
 
-        metrics.SetOldestReadingAge((DateTimeOffset.UtcNow - oldest.Value).TotalSeconds);
+        metrics.SetOldestTransactionAge((DateTimeOffset.UtcNow - oldest.Value).TotalSeconds);
     }
 
     /// <summary>

@@ -13,6 +13,7 @@ using Npgsql;
 using TxMonitoring.Detection.Worker.Configuration;
 using TxMonitoring.Detection.Worker.Features.Diagnostics.ML;
 using TxMonitoring.Detection.Worker.Features.RiskPolicy;
+using TxMonitoring.Detection.Worker.Features.RiskPolicy;
 using TxMonitoring.Detection.Worker.Infrastructure;
 using TxMonitoring.Detection.Worker.Infrastructure.Data;
 using TxMonitoring.Shared;
@@ -313,6 +314,7 @@ public class TransactionConsumerWorker(
         AmountSpikeResult spike;
         VelocitySnapshot velocity;
 
+        var detectorStarted = Stopwatch.GetTimestamp();
         try
         {
             spike = await spikeDetector.InspectAsync(
@@ -335,6 +337,15 @@ public class TransactionConsumerWorker(
                 stoppingToken
             );
             detectorAdvanced = true;
+            var detectorWarm = spike.HistoryCount >= AmountSpikeDetector.HistoryLength;
+            metrics.RecordDetectorLatency(
+                Stopwatch.GetElapsedTime(detectorStarted).TotalMilliseconds,
+                detectorWarm
+            );
+            if (detectorWarm)
+            {
+                metrics.DetectorWarms.Add(1);
+            }
 
             // Velocity is derived cache state: any failure degrades to Unavailable instead of
             // failing the message, rewinding the offset, or touching the DLQ. Caller
@@ -378,6 +389,15 @@ public class TransactionConsumerWorker(
                 _policyConfigurationHash
             );
             reviewRecommended = decision.ReviewRecommended;
+            metrics.Evaluated.Add(1);
+            foreach (var reason in decision.Reasons)
+            {
+                metrics.RecordRuleFired(reason.Code);
+            }
+            if (reviewRecommended)
+            {
+                metrics.ReviewRecommended.Add(1);
+            }
 
             logger.LogDebug(
                 "Decision - ID: {Id}, Seq: {Seq}, Amount: {Amount}, Score: {Score}, Review: {Review}, Lag: {Lag:F1}s",
@@ -521,7 +541,7 @@ public class TransactionConsumerWorker(
 
         if (reviewRecommended)
         {
-            metrics.Anomalies.Add(1);
+            metrics.ReviewsRecommended.Add(1);
         }
 
         return HandleOutcome.Processed;

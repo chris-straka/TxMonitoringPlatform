@@ -125,6 +125,7 @@ public sealed partial class RedisVelocityStore(
             var watermark = await db.StringGetAsync($"{baseKey}:wm");
             if (watermark.HasValue && occurredMs < (long)watermark)
             {
+                metrics.VelocityOutOfOrder.Add(1);
                 return VelocitySnapshot.OutOfOrder();
             }
 
@@ -147,14 +148,17 @@ public sealed partial class RedisVelocityStore(
             {
                 // The watermark advanced between the pre-check and the script: the event is
                 // genuinely older than what this window already absorbed.
+                metrics.VelocityOutOfOrder.Add(1);
                 return VelocitySnapshot.OutOfOrder();
             }
 
             if (!caughtUp)
             {
+                metrics.VelocityRebuilding.Add(1);
                 return VelocitySnapshot.Rebuilding();
             }
 
+            metrics.VelocityObserved.Add(1);
             return VelocitySnapshot.Available((long)result[1], (long)result[2]);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -199,6 +203,7 @@ public sealed partial class RedisVelocityStore(
                 cancellationToken
             );
             var complete = rows.Count < velocityOptions.Value.LazyRebuildLimit;
+            metrics.RebuildRows.Add(rows.Count);
 
             var nowMs = ToEpochMs(timeProvider.GetUtcNow());
             var floorMs = nowMs - Window5mMs;
@@ -239,6 +244,7 @@ public sealed partial class RedisVelocityStore(
             await Task.WhenAll(batchTasks);
 
             var elapsedMs = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+            metrics.RebuildDuration.Record(elapsedMs);
             if (elapsedMs > velocityOptions.Value.RebuildMarkMs)
             {
                 logger.LogWarning(

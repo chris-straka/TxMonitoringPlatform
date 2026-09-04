@@ -1,0 +1,17 @@
+<Solution>
+    <Folder Name="/src/">
+        <Project Path="src/TxMonitoring.Shared/TxMonitoring.Shared.csproj" />
+        <Project Path="src/TxMonitoring.ML.DetectorBuilder/TxMonitoring.ML.DetectorBuilder.csproj" />
+        <Project Path="src/TxMonitoring.Detection.Worker/TxMonitoring.Detection.Worker.csproj" />
+        <Project Path="src/TxMonitoring.Ingestion.Api/TxMonitoring.Ingestion.Api.csproj" />
+        <Project Path="src/TxMonitoring.Feed.Emulator/TxMonitoring.Feed.Emulator.csproj" />
+        <Project Path="src/TxMonitoring.Capture.Gateway/TxMonitoring.Capture.Gateway.csproj" />
+        <Project Path="src/TxMonitoring.Web.Api/TxMonitoring.Web.Api.csproj" />
+    </Folder>
+    <Folder Name="/tests/">
+        <Project Path="tests/TxMonitoring.Detection.Tests/TxMonitoring.Detection.Tests.csproj" />
+        <Project Path="tests/TxMonitoring.Capture.Tests/TxMonitoring.Capture.Tests.csproj" />
+        <Project Path="tests/TxMonitoring.Ingestion.Tests/TxMonitoring.Ingestion.Tests.csproj" />
+        <Project Path="tests/TxMonitoring.Web.Tests/TxMonitoring.Web.Tests.csproj" />
+    </Folder>
+</Solution>

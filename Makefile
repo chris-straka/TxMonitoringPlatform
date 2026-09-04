@@ -28,7 +28,7 @@ clean: ## docker compose down -v (WIPES all local data, observability history, a
 	docker compose down -v
 
 train: ## rebuild the online IID detector configuration in model.zip
-	dotnet run --project src/Industrial.Data.ML
+	dotnet run --project src/TxMonitoring.ML.DetectorBuilder
 
 # Downloads dependencies for each project (since we're at the root .slnx)
 restore:
@@ -36,10 +36,10 @@ restore:
 	dotnet tool restore
 
 test: ## build and run all .NET regression tests
-	dotnet test IndustrialPlatform.slnx
+	dotnet test TxMonitoringPlatform.slnx
 
 frontend: ## run the Vite dev server
-	cd src/Industrial.Web.Dashboard && npm run dev
+	cd src/TxMonitoring.Web.Dashboard && npm run dev
 
 ls:
 	docker compose ls
@@ -47,7 +47,7 @@ ls:
 # This creates the auto-generated C# that you can inspect yourself and apply later
 # `make migrate name=MyNewMigration`
 migrate: ## make migrate name=MyMigration
-	dotnet ef migrations add $(name) --project src/Industrial.Diagnostics.Worker
+	dotnet ef migrations add $(name) --project src/TxMonitoring.Detection.Worker
 
 # If you're trying to migrate an existing field
 # 1. Expand (add new field),
@@ -57,7 +57,7 @@ migrate: ## make migrate name=MyMigration
 
 # In production, we would use CI/CD to apply the SQL migration
 db-update: ## apply pending EF migrations
-	dotnet ef database update --project src/Industrial.Diagnostics.Worker
+	dotnet ef database update --project src/TxMonitoring.Detection.Worker
 
 # -d DB -c command \dt describe tables
 db-check:
@@ -74,16 +74,16 @@ infra-up:
 	docker compose up -d postgres kafka kafka-init otel-collector loki prometheus tempo
 
 run-api:
-	dotnet run --project src/Industrial.Ingestion.Api
+	dotnet run --project src/TxMonitoring.Ingestion.Api
 
 run-worker:
-	dotnet run --project src/Industrial.Diagnostics.Worker
+	dotnet run --project src/TxMonitoring.Detection.Worker
 
 run-em:
-	dotnet run --project src/Industrial.Sensor.Emulator
+	dotnet run --project src/TxMonitoring.Feed.Emulator
 
 run-gw:
-	dotnet run --project src/Industrial.Sensor.EdgeGateway
+	dotnet run --project src/TxMonitoring.Capture.Gateway
 
 # ---------------------------------------------------------------------------
 # Store-and-forward demo

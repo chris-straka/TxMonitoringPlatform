@@ -19,39 +19,39 @@ jobs:
           dotnet-version: 10.0.x
 
       - name: Restore .NET dependencies
-        run: dotnet restore IndustrialPlatform.slnx
+        run: dotnet restore TxMonitoringPlatform.slnx
 
       - name: Build .NET solution
-        run: dotnet build IndustrialPlatform.slnx --configuration Release --no-restore --warnaserror
+        run: dotnet build TxMonitoringPlatform.slnx --configuration Release --no-restore --warnaserror
 
       - name: Verify .NET formatting
-        run: dotnet format IndustrialPlatform.slnx --no-restore --verify-no-changes
+        run: dotnet format TxMonitoringPlatform.slnx --no-restore --verify-no-changes
 
       - name: Restore local .NET tools
         run: dotnet tool restore
 
       - name: Verify EF migration snapshot
-        run: dotnet ef migrations has-pending-model-changes --project src/Industrial.Diagnostics.Worker --configuration Release --no-build --no-color
+        run: dotnet ef migrations has-pending-model-changes --project src/TxMonitoring.Detection.Worker --configuration Release --no-build --no-color
 
       - name: Run regression tests
-        run: dotnet test IndustrialPlatform.slnx --configuration Release --no-build --collect:"XPlat Code Coverage"
+        run: dotnet test TxMonitoringPlatform.slnx --configuration Release --no-build --collect:"XPlat Code Coverage"
 
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: src/Industrial.Web.Dashboard/package-lock.json
+          cache-dependency-path: src/TxMonitoring.Web.Dashboard/package-lock.json
 
       - name: Install dashboard dependencies
-        working-directory: src/Industrial.Web.Dashboard
+        working-directory: src/TxMonitoring.Web.Dashboard
         run: npm ci
 
       - name: Lint dashboard
-        working-directory: src/Industrial.Web.Dashboard
+        working-directory: src/TxMonitoring.Web.Dashboard
         run: npm run lint
 
       - name: Build dashboard
-        working-directory: src/Industrial.Web.Dashboard
+        working-directory: src/TxMonitoring.Web.Dashboard
         run: npm run build
 
       - name: Validate Compose model

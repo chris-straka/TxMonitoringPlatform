@@ -19,7 +19,7 @@ services:
     working_dir: /app
     # Mount your local source code so Vite sees changes
     volumes:
-      - ./src/Industrial.Web.Dashboard:/app
+      - ./src/TxMonitoring.Web.Dashboard:/app
       - dashboard_node_modules:/app/node_modules
     # Run the dev server and bind to all interfaces so Docker can expose it
     command: sh -c "npm ci && npm run dev -- --host"
@@ -34,7 +34,7 @@ services:
     image: web-api
     build:
       context: .
-      dockerfile: src/Industrial.Web.Api/Dockerfile
+      dockerfile: src/TxMonitoring.Web.Api/Dockerfile
     ports:
       - "127.0.0.1:5090:8080"
     environment:
@@ -44,7 +44,7 @@ services:
       - Kafka__EventsTopic=telemetry-events
       - Kafka__AlertsTopic=telemetry-alerts
       - Kafka__ReadinessTimeoutSeconds=3
-      - OTel__ServiceName=Industrial.Web.Api
+      - OTel__ServiceName=TxMonitoring.Web.Api
       - OTel__Endpoint=http://otel-collector:4317
       - CORS__AllowedOrigins=http://localhost:3001,http://localhost:5173
     depends_on:
@@ -61,7 +61,7 @@ services:
     image: ingestion-api
     build:
       context: .
-      dockerfile: src/Industrial.Ingestion.Api/Dockerfile
+      dockerfile: src/TxMonitoring.Ingestion.Api/Dockerfile
     ports:
       # 8080 = REST/health (HTTP/1.1), 8081 = mutually authenticated gRPC (HTTPS/HTTP2).
       - "127.0.0.1:5089:8080"
@@ -79,7 +79,7 @@ services:
       - TransportSecurity__Enabled=true
       - TransportSecurity__TrustedClientCaPath=/tls/ca.crt
       - TransportSecurity__AllowedClientFingerprintsPath=/tls/allowed-client-sha256.txt
-      - OTel__ServiceName=Industrial.Ingestion.Api
+      - OTel__ServiceName=TxMonitoring.Ingestion.Api
       - OTel__Endpoint=http://otel-collector:4317
     depends_on:
       dev-pki-init:
@@ -104,7 +104,7 @@ services:
     image: edge-gateway
     build:
       context: .
-      dockerfile: src/Industrial.Sensor.EdgeGateway/Dockerfile
+      dockerfile: src/TxMonitoring.Capture.Gateway/Dockerfile
     ports:
       - "127.0.0.1:5272:8080"
     volumes:
@@ -128,7 +128,7 @@ services:
       - Uploader__BaseBackoffSeconds=1
       - Uploader__MaxBackoffSeconds=30
       - Uploader__UploadTimeoutSeconds=30
-      - OTel__ServiceName=Industrial.Sensor.EdgeGateway
+      - OTel__ServiceName=TxMonitoring.Capture.Gateway
       - OTel__Endpoint=http://otel-collector:4317
     # It waits only for its local identity material, never for the cloud.
     depends_on:
@@ -147,7 +147,7 @@ services:
     image: diagnostics-worker
     build:
       context: .
-      dockerfile: src/Industrial.Diagnostics.Worker/Dockerfile
+      dockerfile: src/TxMonitoring.Detection.Worker/Dockerfile
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
       - ConnectionStrings__IndustrialDb=Host=postgres;Database=industrial_db;Username=admin;Password=password
@@ -166,7 +166,7 @@ services:
       - Kafka__AlertsTopic=telemetry-alerts
       - Kafka__DeadLetterTopic=telemetry-events-dlq
       - Kafka__ReadinessTimeoutSeconds=3
-      - OTel__ServiceName=Industrial.Diagnostics.Worker
+      - OTel__ServiceName=TxMonitoring.Detection.Worker
       - OTel__Endpoint=http://otel-collector:4317
     depends_on:
       postgres:
@@ -184,14 +184,14 @@ services:
     image: sensor-emulator
     build:
       context: .
-      dockerfile: src/Industrial.Sensor.Emulator/Dockerfile
+      dockerfile: src/TxMonitoring.Feed.Emulator/Dockerfile
     environment:
       - Gateway__Url=http://edge-gateway:8080
       - Emulator__DeviceCount=4
       - Emulator__IntervalSeconds=2
       - Emulator__BufferCapacity=10000
       - Emulator__ReplicaId=0 # owns EQ-0..EQ-3
-      - OTel__ServiceName=Industrial.Sensor.Emulator
+      - OTel__ServiceName=TxMonitoring.Feed.Emulator
       - OTel__Endpoint=http://otel-collector:4317
     depends_on:
       edge-gateway:
@@ -202,14 +202,14 @@ services:
     profiles: [fleet]
     build:
       context: .
-      dockerfile: src/Industrial.Sensor.Emulator/Dockerfile
+      dockerfile: src/TxMonitoring.Feed.Emulator/Dockerfile
     environment:
       - Gateway__Url=http://edge-gateway:8080
       - Emulator__DeviceCount=4
       - Emulator__IntervalSeconds=2
       - Emulator__BufferCapacity=10000
       - Emulator__ReplicaId=1 # owns EQ-4..EQ-7
-      - OTel__ServiceName=Industrial.Sensor.Emulator
+      - OTel__ServiceName=TxMonitoring.Feed.Emulator
       - OTel__Endpoint=http://otel-collector:4317
     depends_on:
       edge-gateway:
@@ -220,14 +220,14 @@ services:
     profiles: [fleet]
     build:
       context: .
-      dockerfile: src/Industrial.Sensor.Emulator/Dockerfile
+      dockerfile: src/TxMonitoring.Feed.Emulator/Dockerfile
     environment:
       - Gateway__Url=http://edge-gateway:8080
       - Emulator__DeviceCount=4
       - Emulator__IntervalSeconds=2
       - Emulator__BufferCapacity=10000
       - Emulator__ReplicaId=2 # owns EQ-8..EQ-11
-      - OTel__ServiceName=Industrial.Sensor.Emulator
+      - OTel__ServiceName=TxMonitoring.Feed.Emulator
       - OTel__Endpoint=http://otel-collector:4317
     depends_on:
       edge-gateway:

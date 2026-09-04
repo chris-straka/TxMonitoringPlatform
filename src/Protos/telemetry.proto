@@ -2,7 +2,7 @@ syntax = "proto3";
 
 import "google/protobuf/timestamp.proto";
 
-option csharp_namespace = "Industrial.Ingestion.Api";
+option csharp_namespace = "TxMonitoring.Ingestion.Api";
 
 // For use between gateway <-> ingestion API
 service TelemetryIngestion {

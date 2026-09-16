@@ -97,6 +97,9 @@ projects:
       - id: policy-perf
         track: swe
         text: "Measured ~67K in-process policy decisions/s (~15µs each) with a repeatability guard proving identical inputs replay identical decisions."
+      - id: e2e-latency
+        track: swe
+        text: "Measured 0.8s average gateway-to-decision latency end to end across a 20-transaction Docker batch (gateway, Kafka, detection, Postgres, Redis; max 1.3s, 20 tx/s)."
       - id: config
         track: csa
         text: "Bound every service's runtime configuration to validated typed options with fail-fast startup checks, so a missing deployment value stops the container instead of silently defaulting."

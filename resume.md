@@ -91,6 +91,12 @@ projects:
       - id: redis-cache
         track: swe
         text: "Built Redis velocity windows as derived cache only, with atomic Lua observation, lazy Postgres rebuilds, and Unavailable-status degradation so a cache outage never blocks consumption or persistence."
+      - id: redelivery
+        track: swe
+        text: "Unified Kafka redelivery handling so same-fingerprint replays are no-ops and same-ID content conflicts route to the DLQ — one decision table shared by the pre-insert check and the unique-violation race handler, proven by tests."
+      - id: policy-perf
+        track: swe
+        text: "Measured ~67K in-process policy decisions/s (~15µs each) with a repeatability guard proving identical inputs replay identical decisions."
       - id: config
         track: csa
         text: "Bound every service's runtime configuration to validated typed options with fail-fast startup checks, so a missing deployment value stops the container instead of silently defaulting."

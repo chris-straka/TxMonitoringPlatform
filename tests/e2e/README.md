@@ -16,7 +16,10 @@ checks these reliability seams:
 5. detection rewinds and later persists a transaction consumed during a Postgres outage;
 6. malformed Kafka JSON is durably copied to `transaction-events-dlq` before its source offset is
    committed; and
-7. a pending alert outbox row survives a Kafka outage and publishes after broker recovery.
+7. a pending alert outbox row survives a Kafka outage and publishes after broker recovery; and
+8. a healthy-path batch of 20 transactions reports gateway-to-decision latency (average and max of `DetectedAt - OccurredAt`) plus batch end-to-end throughput.
+
+Redis runs in the harness (unlike earlier revisions) so velocity windows stay available: without it every decision silently pays reconnect timeouts and the latency number measures degradation, not the healthy path.
 
 Docker with the Compose plugin must be running. The first run may take several minutes while it
 pulls base images and builds the .NET services. Set `E2E_SKIP_BUILD=1` to reuse previously built E2E

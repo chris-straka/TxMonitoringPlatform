@@ -30,6 +30,13 @@ services:
       Outbox__MaxBackoffSeconds: "2"
       Outbox__PublishedRetentionHours: "168"
       Outbox__MaintenanceIntervalSeconds: "5"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  redis:
+    # No published ports: same isolation convention as postgres/kafka.
+    ports: !reset []
 
   postgres:
     ports: !reset []

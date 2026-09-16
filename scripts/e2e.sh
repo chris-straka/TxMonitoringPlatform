@@ -272,10 +272,11 @@ else
     log 'Reusing existing E2E application images'
 fi
 
-log 'Starting Postgres and Kafka'
-compose up --detach postgres kafka-init
+log 'Starting Postgres, Kafka, and Redis'
+compose up --detach postgres kafka-init redis
 wait_for_container_health postgres "$STARTUP_TIMEOUT"
 wait_for_container_health kafka "$STARTUP_TIMEOUT"
+wait_for_container_health redis "$STARTUP_TIMEOUT"
 # kafka-init has no healthcheck; its successful one-shot state is exited with status zero.
 wait_until 'Kafka topic initialization' "$STARTUP_TIMEOUT" kafka_init_succeeded
 
@@ -323,6 +324,39 @@ wait_for_http_from_capture 'ingestion readiness after restart' \
 wait_until 'capture queue to drain' 60 capture_queue_is 0
 wait_until 'three unique transaction rows in Postgres' 60 \
     database_has_unique_ids 3 "$READING_IDS_SQL"
+
+# Steady-state latency batch: the pipeline is fully up (no outage has run
+# yet), so DetectedAt - OccurredAt measures genuine healthy-path cost, not
+# post-restart catch-up.
+log 'Measuring healthy-path detection latency over a latency batch'
+LAT_N=20
+LAT_IDS=''
+i=1
+while [ "$i" -le "$LAT_N" ]; do
+    id="$(printf 'aaaaaaaa-2222-4222-8222-%012d' "$i")"
+    LAT_IDS="$LAT_IDS'$id'::uuid,"
+    post_capture_transaction "$id" "$((100 + i))"
+    i=$((i + 1))
+done
+LAT_IDS="${LAT_IDS%,}"
+LAT_START="$SECONDS"
+wait_until "$LAT_N latency rows in Postgres" 120 \
+    database_has_unique_ids "$LAT_N" "$LAT_IDS"
+LAT_END="$SECONDS"
+LAT_STATS="$(query_db "SELECT COUNT(*) || '|' || ROUND(AVG(EXTRACT(EPOCH FROM (\"DetectedAt\" - \"OccurredAt\")))::numeric, 2) || '|' || ROUND(MAX(EXTRACT(EPOCH FROM (\"DetectedAt\" - \"OccurredAt\")))::numeric, 2) FROM \"Transactions\" WHERE \"MessageId\" IN ($LAT_IDS);")"
+LAT_COUNT="$(printf '%s' "$LAT_STATS" | cut -d'|' -f1)"
+LAT_AVG="$(printf '%s' "$LAT_STATS" | cut -d'|' -f2)"
+LAT_MAX="$(printf '%s' "$LAT_STATS" | cut -d'|' -f3)"
+[ "$LAT_COUNT" = "$LAT_N" ] || fail "latency batch counted $LAT_COUNT rows, want $LAT_N"
+# Ceiling with headroom: steady state measures ~1s, so 30s leaves 24x for
+# slow CI while still catching the missing-Redis class (60s+ per decision
+# in reconnect timeouts) that this seam originally exposed.
+awk "BEGIN { exit !( $LAT_MAX < 30 ) }" \
+    || fail "latency max ${LAT_MAX}s exceeds the 30s ceiling"
+LAT_DT=$((LAT_END - LAT_START))
+LAT_TPS="$(awk "BEGIN { printf \"%.1f\", $LAT_N / ($LAT_DT >= 1 ? $LAT_DT : 1) }")"
+printf 'latency: n=%s avg=%ss max=%ss, batch end-to-end %s tx/s\n' \
+    "$LAT_N" "$LAT_AVG" "$LAT_MAX" "$LAT_TPS"
 
 log 'Stopping Postgres and proving detection rewinds the consumed record'
 POSTGRES_OUTAGE_STARTED="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
@@ -387,4 +421,5 @@ wait_until 'outbox row to publish after Kafka recovery' 90 \
     outbox_is_published "$OUTBOX_MESSAGE_ID"
 
 log 'All failure/recovery assertions passed'
-printf 'Verified 4 transaction MessageIds, one DLQ record, and one recovered outbox publish.\n'
+printf 'Verified 4 transaction MessageIds, one DLQ record, one recovered outbox publish, and %s latency rows (avg %ss, max %ss).\n' \
+    "$LAT_N" "$LAT_AVG" "$LAT_MAX"

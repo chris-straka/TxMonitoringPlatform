@@ -295,7 +295,10 @@ public class TransactionConsumerWorker(
             // A Kafka replay is a no-op only when the immutable content matches. Differing
             // content under one MessageId is a deterministic conflict for the DLQ, never an
             // overwrite and never a silent duplicate.
-            if (existing.PayloadFingerprint.SequenceEqual(fingerprint))
+            if (
+                RedeliveryClassifier.Classify(existing.PayloadFingerprint, fingerprint)
+                == RedeliveryOutcome.Duplicate
+            )
             {
                 logger.LogDebug("Duplicate MessageId {MessageId} skipped.", messageId);
                 metrics.RecordDuplicate("select");
@@ -510,15 +513,18 @@ public class TransactionConsumerWorker(
                 r => r.MessageId == messageId,
                 stoppingToken
             );
-            if (winner is not null && winner.PayloadFingerprint.SequenceEqual(fingerprint))
-            {
-                logger.LogDebug("Duplicate MessageId {MessageId} rejected by index.", messageId);
-                metrics.RecordDuplicate("index");
-                return HandleOutcome.Duplicate;
-            }
-
             if (winner is not null)
             {
+                if (
+                    RedeliveryClassifier.Classify(winner.PayloadFingerprint, fingerprint)
+                    == RedeliveryOutcome.Duplicate
+                )
+                {
+                    logger.LogDebug("Duplicate MessageId {MessageId} rejected by index.", messageId);
+                    metrics.RecordDuplicate("index");
+                    return HandleOutcome.Duplicate;
+                }
+
                 logger.LogWarning(
                     "Conflicting immutable content for MessageId {MessageId}; routing to DLQ.",
                     messageId

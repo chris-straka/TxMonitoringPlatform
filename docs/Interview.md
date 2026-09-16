@@ -21,3 +21,11 @@
 - "How did you pass OpenTelemetry trace IDs from the gRPC origin, through Kafka, and into the ML worker?"
 
 - "How does ArgoCD differ from traditional push-based CI/CD pipelines like GitHub Actions?"
+
+# From the "e2e-latency" bullet:
+
+- "0.8 seconds average gateway-to-decision — what does that number actually cover, and how did you measure it?"
+
+- "Did you trust the first number you measured?"
+
+  The story to tell: no. The first run said 62s average. The e2e compose never started Redis, so every decision silently burned reconnect timeouts before degrading to Unavailable — the harness was measuring degradation, not the healthy path, and nothing failed because nothing asserted latency. The fix made the environment honest (Redis runs in the harness now, detection waits on it healthy) and the assertion honest (a 30s ceiling with 24x headroom over steady state, tight enough to fail loudly on a recurrence). True number after the fix: 0.8s avg, 1.3s max, 20 tx/s, stable across runs. The seam lives in `scripts/e2e.sh`; the lesson is the answer: distrust any latency number from an environment that doesn't assert it.

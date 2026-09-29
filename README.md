@@ -1,5 +1,11 @@
 # TxMonitoringPlatform
 
+> Origin: this repo began as a copy of IndustrialPlatform (built for an
+> agritech posting that has since expired), re-themed for fintech because
+> that is the industry I want to work in. The pipeline core is shared
+> lineage; the feed, risk policy, velocity cache, and detector provenance
+> are fintech-specific. See IndustrialPlatform for the generic platform.
+
 Near-real-time **transaction risk-monitoring** demo: a synthetic feed of outbound debit
 attempts flows through a durable capture pipeline into Kafka, where a detection worker keeps
 per-account state, assigns an explainable heuristic risk score, persists the decision, and

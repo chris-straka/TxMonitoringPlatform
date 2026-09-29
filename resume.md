@@ -15,7 +15,7 @@ projects:
         text: "Developed a detection worker consuming Kafka events to run per-account amount-spike checks and a deterministic risk policy, persisting each decision with reason codes and detector provenance."
       - id: signalr
         track: both
-        text: "Implemented a SignalR WebSocket bridge to stream live transaction events and risk alerts directly to a React dashboard."
+        text: "Implemented a SignalR WebSocket bridge to stream live transaction events and risk alerts directly to a Vue dashboard."
       - id: terraform
         track: csa
         text: "Drafted infrastructure specifications using Terraform (IaC) and defined GitOps deployment workflows via ArgoCD on Kubernetes (Helm, Istio), validated by plan-only CI checks."
@@ -36,7 +36,7 @@ projects:
         text: "Implemented distributed W3C tracing, metrics, and logging across the pipeline using OpenTelemetry, aggregating into Prometheus, Tempo, and Loki for Grafana dashboards."
       - id: api-relay
         track: swe
-        text: "Developed an ASP.NET Web API relaying Kafka events via a SignalR WebSocket bridge, pushing live updates to a React/Vite frontend."
+        text: "Developed an ASP.NET Web API relaying Kafka events via a SignalR WebSocket bridge, pushing live updates to a Vue/Vite frontend."
 
 
       # pool
@@ -105,7 +105,7 @@ projects:
         text: "Bound every service's runtime configuration to validated typed options with fail-fast startup checks, so a missing deployment value stops the container instead of silently defaulting."
       - id: ci
         track: both
-        text: "Set up GitHub Actions CI running a warnings-as-errors build, format verification, EF Core migration-drift detection, tests with coverage, frontend lint and build, Compose validation, and Helm chart lint and render."
+        text: "Set up GitHub Actions CI running a warnings-as-errors build, format verification, EF Core migration-drift detection, tests with coverage, frontend lint/test/build, Compose validation, and Helm chart lint and render."
       - id: reliability-boundary
         track: both
         text: "Defined an explicit reliability boundary—best-effort before the gateway's 202 Accepted and durable custody after it, with permanent rejections quarantined and metered—backed by regression tests, an isolated failure harness, chaos targets, and an automated audit."
@@ -141,7 +141,7 @@ projects:
         text: "TODO: Applied the Terraform stack to a real cluster and implemented GitOps deployment workflows via ArgoCD on Kubernetes (Helm, Istio)."
       - id: api-relay-subsecond
         track: swe
-        text: "TODO: Developed an ASP.NET Web API relaying Kafka events via a SignalR WebSocket bridge, pushing sub-second updates to a React/Vite frontend."
+        text: "TODO: Developed an ASP.NET Web API relaying Kafka events via a SignalR WebSocket bridge, pushing sub-second updates to a Vue/Vite frontend."
       - id: production-security
         track: csa
         text: "TODO: Extended workload identity and encrypted transport to the feed, Kafka, Postgres, Redis, and observability, backed by production certificate enrollment, rotation, and revocation."

@@ -1,0 +1,53 @@
+.dashboard {
+  padding: 0 32px 32px;
+  text-align: left;
+}
+
+.dashboard h1 {
+  text-align: center;
+}
+
+.banner {
+  text-align: center;
+  margin: 0 0 8px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+
+@media (max-width: 1024px) {
+  .dashboard {
+    padding: 0 20px 24px;
+  }
+  .grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.alerts {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 15px;
+}
+
+.alerts caption {
+  text-align: left;
+  font-weight: 600;
+  padding-bottom: 8px;
+  color: var(--text-h);
+}
+
+.alerts th,
+.alerts td {
+  text-align: left;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.alerts th {
+  color: var(--text-h);
+}

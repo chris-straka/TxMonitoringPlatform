@@ -101,7 +101,7 @@ missing deployment value. Only the detection worker owns production EF migration
 ```sh
 dotnet build TxMonitoringPlatform.slnx --no-restore
 dotnet test TxMonitoringPlatform.slnx --no-restore
-cd src/TxMonitoring.Web.Dashboard && npm run lint && npm run build
+cd src/TxMonitoring.Web.Dashboard && npm run lint && npm test && npm run build
 docker compose config --quiet
 dotnet ef migrations has-pending-model-changes --project src/TxMonitoring.Detection.Worker --no-build
 ```

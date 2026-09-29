@@ -1,4 +1,7 @@
 [tools]
+# Dashboards build from node:24-alpine (see src/*/Dockerfile); keep local
+# toolchain on Node 24 LTS (odd Node 25 is unsupported by vitest).
+node = "24"
 helm = "latest"
 # buf: proto linting + BREAKING CHANGE detection against git history.
 #      `buf breaking --against '.git#branch=main'` catches a field renumber or a

@@ -5,30 +5,35 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "vue-tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "vitest run",
+    "typecheck": "vue-tsc --noEmit -p tsconfig.app.json"
   },
   "dependencies": {
-    "@highcharts/react": "^5.0.0",
     "@microsoft/signalr": "^10.0.0",
-    "highcharts": "^12.6.0",
-    "react": "^19.2.5",
-    "react-dom": "^19.2.5"
+    "@vueuse/core": "^14.4.0",
+    "highcharts": "^13.0.2",
+    "highcharts-vue": "^2.0.2",
+    "pinia": "^4.0.3",
+    "vue": "^3.5.42",
+    "vue-router": "^5.3.1"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^24.12.2",
-    "@types/react": "^19.2.14",
-    "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^6.0.1",
+    "@vitejs/plugin-vue": "^6.0.9",
+    "@vue/test-utils": "^2.5.0",
     "eslint": "^10.2.1",
-    "eslint-plugin-react-hooks": "^7.1.1",
-    "eslint-plugin-react-refresh": "^0.5.2",
+    "eslint-plugin-vue": "^10.11.0",
     "globals": "^17.5.0",
-    "prettier": "3.8.3",
+    "happy-dom": "^20.14.5",
+    "prettier": "^3.9.6",
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.58.2",
-    "vite": "^8.0.10"
+    "vite": "^8.0.10",
+    "vitest": "^4.1.11",
+    "vue-tsc": "^3.3.11"
   }
 }

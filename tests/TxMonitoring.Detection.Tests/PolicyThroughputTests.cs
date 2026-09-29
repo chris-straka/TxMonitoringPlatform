@@ -1,10 +1,10 @@
 using System.Diagnostics;
 
-using Xunit.Abstractions;
-
 using TxMonitoring.Detection.Worker.Features.Diagnostics.ML;
 using TxMonitoring.Detection.Worker.Features.RiskPolicy;
 using TxMonitoring.Shared;
+
+using Xunit.Abstractions;
 
 namespace TxMonitoring.Detection.Tests;
 

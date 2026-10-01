@@ -6,8 +6,8 @@ using TxMonitoring.Shared;
 namespace TxMonitoring.Detection.Tests;
 
 /// <summary>
-/// Pins the closed v1 risk-alerts shape: version, casing, required members, and the
-/// string-encoded velocity aggregates that can exceed JavaScript's safe integer.
+/// Pins the v1 risk-alerts shape: version, casing, required members, and the string-encoded
+/// velocity aggregates.
 /// </summary>
 public sealed class RiskAlertGoldenTests
 {

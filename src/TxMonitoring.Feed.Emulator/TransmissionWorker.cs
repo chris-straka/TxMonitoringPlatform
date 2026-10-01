@@ -8,7 +8,7 @@ using TxMonitoring.Feed.Emulator.Infrastructure;
 namespace TxMonitoring.Feed.Emulator;
 
 /// <summary>
-/// LOOP 2: Drains the buffer (channel) to send to the gateway.
+/// Drains the channel and posts each transaction to the gateway.
 /// </summary>
 public class TransmissionWorker(
     Channel<TransactionSubmission> channel,
@@ -28,24 +28,20 @@ public class TransmissionWorker(
 
             try
             {
-                // CreateClient() returns a new HttpClient but not a new handler chain.
-                // The factory pools chains for GatewayClient.Name that the client uses.
-                // It then expires each chain after HandlerLifetime (2 mins by default).
-                // This lets it detect DNS changes every 2 mins (DNS is only stale for 2 mins)
+                // CreateClient reuses a pooled handler chain. The factory rotates chains after
+                // HandlerLifetime (2 minutes by default), so DNS changes are picked up.
                 var client = httpClientFactory.CreateClient(GatewayClient.Name);
 
-                // The stoppingToken will abort the HTTP call on shutdown
-                // But that only stops the client from waiting for a response
-                // This means the result on the server is ambiguous (EffO protects)
+                // Cancelling on shutdown only stops waiting for the response. The gateway may
+                // still have stored the transaction; MessageId idempotency covers the resend.
                 using var response = await client.PostAsJsonAsync(
                     GatewayClient.Route,
                     data,
                     stoppingToken
                 );
 
-                // Only the gateway's 202 carries the durable-ownership promise. Treat an
-                // unexpected 2xx from a proxy or misrouted endpoint as a dropped delivery rather
-                // than quietly widening the contract to every successful-looking response.
+                // Only the gateway's 202 means it durably owns the transaction. Any other 2xx,
+                // e.g. from a proxy or a misrouted endpoint, counts as a dropped delivery.
                 if (response.StatusCode == System.Net.HttpStatusCode.Accepted)
                 {
                     outcome = "accepted";
@@ -61,8 +57,7 @@ public class TransmissionWorker(
                 else if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
                 {
                     outcome = "backpressure";
-                    // BACKPRESSURE -> consumer telling producer to slow down
-                    // Polly reads/respects the consumer's Retry-After response header
+                    // The resilience handler already honoured Retry-After on its retries.
                     metrics.Rejected.Add(1);
                     metrics.DeliveryDropped.Add(1);
                     logger.LogWarning(
@@ -90,16 +85,14 @@ public class TransmissionWorker(
             catch (Exception ex)
             {
                 outcome = "failed";
-                // Two different paths land here (circuit breaker related)
-                // 1. Polly exhausted its retries (timeout, 5xx, conn reset)
-                // 2. The circuit is open from earlier failures (didn't even try)
+                // Either the retries were exhausted or the circuit was already open and no call
+                // was made. An open circuit later lets one half-open probe through.
                 metrics.Failed.Add(1);
                 metrics.DeliveryDropped.Add(1);
                 logger.LogError(
                     "[DELIVERY DROPPED] Gateway did not accept the transaction after bounded retries: {Message}",
                     ex.Message
                 );
-                // If 2. it will eventually send a half-open PROBE, not a retry to close the circuit
             }
             finally
             {

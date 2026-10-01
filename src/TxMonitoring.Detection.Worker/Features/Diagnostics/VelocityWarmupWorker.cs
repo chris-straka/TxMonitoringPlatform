@@ -10,10 +10,9 @@ using TxMonitoring.Detection.Worker.Infrastructure.Data;
 namespace TxMonitoring.Detection.Worker.Features.Diagnostics;
 
 /// <summary>
-/// Best-effort startup acceleration for velocity windows: pages the most recent rows
-/// through the repository shape and materializes in-window events per identity. It sets
-/// no rebuilt flags, so each key's first touch still completes through the lazy path and
-/// serves Rebuilding until genuinely caught up.
+/// Best-effort startup warmup for velocity windows. It pages the most recent rows and loads
+/// in-window events per account and currency. It sets no rebuilt flags, so each key's first
+/// use still completes through the lazy path and reports Rebuilding until caught up.
 /// </summary>
 public sealed class VelocityWarmupWorker(
     IDbContextFactory<AppDbContext> contextFactory,
@@ -51,7 +50,7 @@ public sealed class VelocityWarmupWorker(
         Guid? lastId = null;
         DateTimeOffset? lastDetectedAt = null;
 
-        // Keyset pages through detection order; each page is one bounded query, never a scan.
+        // Keyset paging in detection order keeps each page a bounded query, not a scan.
         while (loaded < options.LazyRebuildLimit && !stoppingToken.IsCancellationRequested)
         {
             IQueryable<MonitoredTransaction> query = db.Transactions;

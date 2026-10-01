@@ -5,9 +5,7 @@ import type { RiskAlert, TransactionEvent } from '../types/transactions'
 export const MAX_EVENTS = 200
 export const MAX_ALERTS = 50
 
-/// Live feed state. Kafka and the outbox are both at-least-once, so both push
-/// paths share the same bounded identity window: an ambiguous ACK can replay a
-/// message without drawing the same point or alert twice in the live UI.
+/** Live feed state, deduplicated by MessageId. */
 export const useMonitoringStore = defineStore('monitoring', () => {
   const events = ref<TransactionEvent[]>([])
   const alerts = ref<RiskAlert[]>([])
@@ -23,8 +21,8 @@ export const useMonitoringStore = defineStore('monitoring', () => {
     events.value = [...events.value.slice(-(MAX_EVENTS - 1)), event]
   }
 
-  // Newest first without re-sorting: an older duplicate that arrives late must
-  // not jump the queue ahead of reviews the operator already saw.
+  // Newest arrival first, without re-sorting by time, so a late older alert does not move
+  // ahead of ones the operator already saw.
   function pushAlert(alert: RiskAlert): void {
     if (!remember(alert.messageId, seenAlertIds, alertIdOrder, MAX_ALERTS)) return
     alerts.value = [alert, ...alerts.value.slice(0, MAX_ALERTS - 1)]
@@ -42,8 +40,8 @@ export const useMonitoringStore = defineStore('monitoring', () => {
   return { events, alerts, pushEvent, pushAlert, clear }
 })
 
-// Kafka and the outbox are both at-least-once. Keep a bounded identity window so an ambiguous
-// ACK can replay a message without drawing the same point or alert twice in the live UI.
+// Kafka and the outbox are both at-least-once. A bounded window of seen IDs keeps a replay
+// after an ambiguous ACK from drawing the same point or alert twice.
 export function remember(
   id: string,
   seen: Set<string>,

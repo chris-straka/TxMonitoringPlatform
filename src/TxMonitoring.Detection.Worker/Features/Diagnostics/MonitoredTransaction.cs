@@ -3,20 +3,19 @@ using Microsoft.EntityFrameworkCore;
 namespace TxMonitoring.Detection.Worker.Features.Diagnostics;
 
 /// <summary>
-/// A monitored transaction stored in Postgres: the immutable observed event plus the
-/// locally reproducible decision evidence. This is not a tamper-evident or regulatory
-/// audit trail. Amounts are bigint; the risk score is a transparent ranking, not a
-/// calibrated fraud probability.
+/// A monitored transaction in Postgres: the observed event plus the evidence behind its
+/// decision. This is not a tamper-evident or regulatory audit trail. The risk score is a
+/// transparent ranking, not a calibrated fraud probability.
 /// </summary>
 [Index(nameof(MessageId), IsUnique = true)]
 [Index(nameof(AccountId), nameof(Currency), nameof(DetectedAt), nameof(Id))]
 [Index(nameof(AccountId), nameof(Currency), nameof(OccurredAt))]
 public class MonitoredTransaction
 {
-    // See the feed generator for why v7 is better for the index
+    // Time-ordered v7 keys append to the index instead of splitting random pages.
     public Guid Id { get; set; } = Guid.CreateVersion7();
 
-    // idempotency key (generator -> gateway -> ingestion -> kafka -> worker)
+    // Idempotency key, unchanged from the generator through every hop.
     public Guid MessageId { get; set; }
     public string AccountId { get; set; } = string.Empty;
     public long SequenceNumber { get; set; }
@@ -24,12 +23,12 @@ public class MonitoredTransaction
     public DateTimeOffset ReceivedAt { get; set; }
     public DateTimeOffset DetectedAt { get; set; } = DateTimeOffset.UtcNow;
 
-    // Attempted debit amount in integer minor units.
+    // Attempted debit in integer minor units.
     public long AmountMinor { get; set; }
     public string Currency { get; set; } = string.Empty;
 
-    // SHA-256 over the immutable origin content (see TransactionFingerprint). A replay
-    // with the same ID but different content is a deterministic conflict, not a duplicate.
+    // SHA-256 over the origin content (see TransactionFingerprint). A replay with the same ID
+    // but different content is a conflict, not a duplicate.
     public byte[] PayloadFingerprint { get; set; } = [];
     public int FingerprintVersion { get; set; }
 
@@ -37,8 +36,7 @@ public class MonitoredTransaction
     public bool ReviewRecommended { get; set; }
 
     /// <summary>
-    /// Every fired reason in fixed rule order, serialized with the shared JSON shape.
-    /// Persisted even below the alert threshold.
+    /// Every fired reason in rule order, persisted even below the alert threshold.
     /// </summary>
     public string ReasonsJson { get; set; } = "[]";
 

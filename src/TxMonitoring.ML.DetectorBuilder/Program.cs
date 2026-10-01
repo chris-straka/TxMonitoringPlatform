@@ -6,7 +6,7 @@ using Microsoft.ML.Transforms.TimeSeries;
 
 using TxMonitoring.Shared;
 
-// Helper to get the actual folder where this file lives
+// The output path is relative to the source tree, not the build output directory.
 string GetSourceDir([CallerFilePath] string path = "") => Path.GetDirectoryName(path)!;
 
 var localDir = GetSourceDir();
@@ -18,10 +18,9 @@ Console.WriteLine("Building online IID spike-detector configuration for the amou
 
 var mlContext = new MLContext();
 
-// DetectIidSpike is an online statistical detector. Fit validates the schema but does not learn
-// parameters from historical rows, so one representative value is sufficient to build the
-// transformer. The worker warms each account's independent state from its recent Postgres rows,
-// transforming minor units through the same shared AmountFeatures function the runtime uses.
+// DetectIidSpike is an online detector. Fit validates the schema but learns nothing from rows,
+// so one representative value is enough to build the transformer. The worker warms each
+// account's state from recent Postgres rows through the same AmountFeatures transform.
 var schemaData = mlContext.Data.LoadFromEnumerable(
     new[] { new AmountObservation { AmountFeature = AmountFeatures.FromAmountMinor(2_500) } }
 );
@@ -41,9 +40,9 @@ Console.WriteLine($"Model saved to: {modelPath}");
 Console.WriteLine("\n--- Testing Model Locally ---");
 var predictionEngine = model.CreateTimeSeriesEngine<AmountObservation, SpikePrediction>(mlContext);
 
-// Warm up the engine with 50 steady $25-$30-equivalent points. Deterministic spread, not
-// Random, so regenerating the artifact always exercises the same scenario; constant history
-// would leave the detector with zero variance and flag any jitter as a spike.
+// Warm the engine with 50 steady $25-$30 points. The spread is deterministic so regenerating
+// the artifact repeats the same check. A constant history would have zero variance and flag
+// any jitter as a spike.
 for (int i = 0; i < 50; i++)
 {
     predictionEngine.Predict(

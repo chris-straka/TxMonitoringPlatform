@@ -4,7 +4,7 @@ namespace TxMonitoring.Detection.Worker.Features.RiskPolicy;
 
 /// <summary>
 /// Availability of the velocity evidence behind a decision. Only <see cref="Available"/>
-/// carries evidence; every other state persists null evidence, never zeros.
+/// carries evidence. Every other state persists null, not zeros.
 /// </summary>
 [JsonConverter(typeof(JsonStringEnumConverter))]
 public enum VelocityStatus
@@ -16,8 +16,8 @@ public enum VelocityStatus
 }
 
 /// <summary>
-/// The velocity-window evidence a policy evaluation observed. The (T - window, T] interval
-/// uses OccurredAt, so draining an outage does not manufacture a burst from old events.
+/// The velocity-window evidence a policy evaluation saw. The (T - window, T] interval uses
+/// OccurredAt, so draining a backlog after an outage does not look like a burst.
 /// </summary>
 public sealed record VelocitySnapshot(VelocityStatus Status, long? Count1m, long? Amount5mMinor)
 {
@@ -32,9 +32,8 @@ public sealed record VelocitySnapshot(VelocityStatus Status, long? Count1m, long
 }
 
 /// <summary>
-/// Atomic velocity observation. Implemented by Redis in production and by an explicit
-/// unavailable stub where Redis is absent; the policy treats anything but
-/// <see cref="VelocityStatus.Available"/> as missing evidence, never as zero counts.
+/// Atomic velocity observation, backed by Redis. The policy treats anything but
+/// <see cref="VelocityStatus.Available"/> as missing evidence, not zero counts.
 /// </summary>
 public interface IVelocityStore
 {

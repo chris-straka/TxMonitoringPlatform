@@ -77,9 +77,8 @@ public class TransactionIngestionService(
                     record.AccountId,
                     record.SequenceNumber,
                     record.OccurredAt.ToDateTimeOffset(),
-                    // Delivery metadata, stamped once per publication attempt. A retry of the
-                    // same MessageId after a lost acknowledgement may stamp a later value;
-                    // the first durable Postgres row still wins.
+                    // Stamped per publish attempt. A retry after a lost acknowledgement may stamp
+                    // a later value, but the first Postgres row for the MessageId wins.
                     DateTimeOffset.UtcNow,
                     record.AmountMinor,
                     record.Currency
@@ -91,7 +90,7 @@ public class TransactionIngestionService(
                     Value = JsonSerializer.Serialize(payload, TransactionJson.Options),
                 };
 
-                // Without this there's no way to connect the generator trace to the consumer's trace
+                // Carries the generator's trace context through to the consumer.
                 if (!string.IsNullOrEmpty(record.Traceparent))
                 {
                     kafkaMsg.Headers =
@@ -100,7 +99,7 @@ public class TransactionIngestionService(
                     ];
                 }
 
-                // Produce now, await later: librdkafka batches msgs into one broker request.
+                // Produce all first and await later so librdkafka can batch them into one request.
                 inflight.Add(
                     (
                         record.MessageId,
@@ -115,9 +114,8 @@ public class TransactionIngestionService(
             }
             catch (Exception ex)
             {
-                // Validation failures are permanent and are the only records named as rejected.
-                // Producer failures are transient or internal: leaving this ID unnamed tells the
-                // gateway to retain it and retry instead of deleting the only durable copy.
+                // Only validation failures are named as rejected. A producer failure leaves the
+                // ID unnamed so the gateway keeps its durable copy and retries.
                 logger.LogError(
                     ex,
                     "Could not queue transaction {MessageId} from {AccountId}; gateway will retry it.",
@@ -141,8 +139,8 @@ public class TransactionIngestionService(
                 }
                 else
                 {
-                    // PossiblyPersisted is deliberately ambiguous. Naming it accepted would let
-                    // the gateway delete its copy without a durable broker acknowledgement.
+                    // PossiblyPersisted is ambiguous. Naming it accepted would let the gateway
+                    // delete its copy without a broker acknowledgement.
                     undelivered++;
                     firstFailure ??= new KafkaException(
                         new Error(
@@ -166,7 +164,7 @@ public class TransactionIngestionService(
 
         metrics.Failed.Add(undelivered);
 
-        // One line, because an outage fails all records and buries the log
+        // One summary line, since an outage fails every record and would flood the log.
         if (undelivered > 0)
         {
             logger.LogError(
@@ -185,8 +183,8 @@ public class TransactionIngestionService(
             undelivered > 0
         );
 
-        // Complete means every ID was classified accepted or permanently rejected, not that
-        // the gateway's work is done: unnamed IDs stay in gateway custody for retry.
+        // Complete means every ID was classified as accepted or rejected. Unnamed IDs stay with
+        // the gateway for retry.
         return new IngestResponse
         {
             Complete = undelivered == 0,

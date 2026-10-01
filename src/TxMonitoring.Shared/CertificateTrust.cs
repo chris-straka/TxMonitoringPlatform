@@ -3,15 +3,15 @@ using System.Security.Cryptography.X509Certificates;
 
 namespace TxMonitoring.Shared;
 
-/// <summary>Small, deterministic X.509 policy shared by the two ends of the edge-cloud hop.</summary>
+/// <summary>X.509 validation shared by the gateway and ingestion ends of the mTLS hop.</summary>
 public static class CertificateTrust
 {
     public const string ServerAuthenticationOid = "1.3.6.1.5.5.7.3.1";
     public const string ClientAuthenticationOid = "1.3.6.1.5.5.7.3.2";
 
     /// <summary>
-    /// Builds a leaf to one explicitly configured CA and requires the intended TLS EKU. Custom
-    /// root trust avoids weakening validation with an accept-any development callback.
+    /// Chains a leaf to one configured CA and requires the intended TLS EKU. Custom root trust
+    /// avoids an accept-any development callback.
     /// </summary>
     public static bool IsTrustedFor(
         X509Certificate2 certificate,

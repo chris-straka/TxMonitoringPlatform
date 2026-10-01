@@ -1,12 +1,11 @@
 namespace TxMonitoring.Capture.Gateway.Features.Buffer;
 
 /// <summary>
-/// A transaction ingestion declared permanently invalid, retained briefly for operator inspection.
+/// A transaction ingestion rejected permanently, kept briefly for operator inspection.
 /// </summary>
 /// <remarks>
-/// Quarantine is not another delivery queue: ingestion has explicitly said it will never accept
-/// this MessageId. Keeping the original payload makes admission drift diagnosable without letting
-/// one poison transaction block newer ones. Rows are bounded by both age and count.
+/// This is not a retry queue. Keeping the payload makes admission drift diagnosable without
+/// letting one poison transaction block newer ones. Rows are bounded by age and count.
 /// </remarks>
 public sealed class QuarantinedTransaction
 {

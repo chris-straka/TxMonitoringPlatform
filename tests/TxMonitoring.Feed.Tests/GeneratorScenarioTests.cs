@@ -33,9 +33,8 @@ public sealed class GeneratorScenarioTests
     [Fact]
     public void Steady_amounts_stay_far_below_the_absolute_rule_bound()
     {
-        // The documented v1 absolute-high bound is 250_000 minor units. Steady tops out
-        // at 4_999, so the default scenario cannot trip an amount rule on size alone;
-        // the policy suite proves the full below-threshold claim against live config.
+        // The absolute-high threshold is 250_000 minor units and Steady tops out at 4_999.
+        // RiskPolicyTests covers the full below-threshold case against the shipped config.
         for (var seq = 1; seq <= 200; seq++)
         {
             Assert.True(
@@ -86,7 +85,7 @@ public sealed class GeneratorScenarioTests
     [Fact]
     public void Steady_cadence_stays_below_the_velocity_count_bound()
     {
-        // 5s per account is 12 events/min, below the documented 20/min count rule.
+        // 5s per account is 12 events/min, below the 20/min count rule.
         var perMinute = 60 / TransactionGeneratorWorker.EffectiveIntervalSeconds(
             5,
             GeneratorScenario.Steady

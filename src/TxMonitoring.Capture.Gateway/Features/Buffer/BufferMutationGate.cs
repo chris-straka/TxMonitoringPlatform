@@ -4,9 +4,9 @@ namespace TxMonitoring.Capture.Gateway.Features.Buffer;
 /// Serializes the two transitions that move a MessageId between durable gateway states.
 /// </summary>
 /// <remarks>
-/// SQLite already serializes writers, but the idempotency decision spans two tables: a live
-/// reading and a retained completion marker. Holding this gate across the check and commit keeps
-/// a late sensor retry from slipping between the uploader's delete and marker insert.
+/// SQLite serializes writers, but the idempotency check spans the live queue and the settled
+/// markers. Holding this gate across check and commit keeps a late retry from slipping between
+/// the uploader's delete and its marker insert.
 /// </remarks>
 public sealed class BufferMutationGate : IDisposable
 {

@@ -2,9 +2,10 @@ import { HubConnectionBuilder, HttpTransportType, LogLevel } from '@microsoft/si
 import { tryOnUnmounted } from '@vueuse/core'
 import type { RiskAlert, TransactionEvent } from '../types/transactions'
 
-/// Opens the single process-wide SignalR risk feed and forwards validated
-/// payloads to the given callbacks. Safe to call once from the app shell:
-/// the connection is torn down when the caller's component unmounts.
+/**
+ * Opens the SignalR risk feed and forwards validated payloads to the callbacks. Call it once
+ * from the app shell; the connection closes when that component unmounts.
+ */
 export function useRiskFeed(
   onEvent?: (data: TransactionEvent) => void,
   onAlert?: (data: RiskAlert) => void,
@@ -23,8 +24,8 @@ export function useRiskFeed(
     })
     .configureLogging(LogLevel.Information)
     .withAutomaticReconnect({
-      // The built-in default stops after four tries. An ingestion outage can be
-      // much longer, so cap the delay without ever giving up on an open dashboard.
+      // The default policy stops after four tries. An outage can last much longer, so this
+      // caps the delay and keeps retrying while the dashboard is open.
       nextRetryDelayInMilliseconds: ({ previousRetryCount }) =>
         Math.min(1_000 * 2 ** Math.min(previousRetryCount, 5), 30_000),
     })
@@ -44,8 +45,8 @@ export function useRiskFeed(
   let retryTimer: number | undefined
   let retryDelayMs = 1_000
 
-  // Automatic reconnect starts only after one successful connection. This loop covers the
-  // common Compose race where the browser loads before Web.Api has finished starting.
+  // Automatic reconnect applies only after a first successful connection. This loop covers
+  // the browser loading before Web.Api has started, which is common under Compose.
   const start = async (): Promise<void> => {
     try {
       await connection.start()
@@ -88,8 +89,8 @@ export function parsePayload<T>(
 
 export function isTransactionEvent(value: unknown): value is TransactionEvent {
   if (!isRecord(value)) return false
-  // A PascalCase MessageId means a pre-cutover sender; surface the mismatch instead
-  // of silently accepting a half-parsed contract.
+  // A PascalCase MessageId comes from a sender on the old contract. Log it rather than accept a
+  // half-parsed payload.
   if ('MessageId' in value && !('messageId' in value)) {
     console.error('Discarding pre-cutover PascalCase event payload', value)
     return false

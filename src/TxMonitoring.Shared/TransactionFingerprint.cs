@@ -5,14 +5,13 @@ using System.Text;
 namespace TxMonitoring.Shared;
 
 /// <summary>
-/// Identity for idempotent retries: MessageId selects the record, the fingerprint proves
-/// the immutable origin content is identical. ReceivedAt, trace context, broker
-/// coordinates, and all other delivery metadata are excluded, so a retry after a lost
-/// acknowledgement hashes identically. Equivalent timestamp offsets are not different data.
+/// Content hash for idempotent retries. MessageId selects the record, and the fingerprint
+/// shows a retry carries the same origin content.
 /// </summary>
 /// <remarks>
-/// The hash detects accidental reuse; it is not authentication. Gateway absorption lasts
-/// only as long as bounded settled/quarantine retention, not as a permanent global registry.
+/// Delivery metadata (ReceivedAt, trace context, broker coordinates) is excluded, so a retry
+/// after a lost acknowledgement hashes the same. The hash detects accidental ID reuse; it is
+/// not authentication.
 /// </remarks>
 public static class TransactionFingerprint
 {
@@ -23,7 +22,7 @@ public static class TransactionFingerprint
     /// length plus exact UTF-8 bytes; SequenceNumber as signed 64-bit big-endian;
     /// OccurredAt as signed 64-bit epoch milliseconds; AmountMinor as signed 64-bit
     /// big-endian; canonical uppercase Currency as length-prefixed UTF-8. SHA-256 over
-    /// the concatenation. Never interpolation, delimiters, culture-sensitive formatting,
+    /// the concatenation. No string interpolation, delimiters, culture-sensitive formatting,
     /// JSON, or database-round-tripped timestamps.
     /// </summary>
     public static byte[] ComputeV1(
@@ -36,7 +35,7 @@ public static class TransactionFingerprint
     {
         var accountBytes = Encoding.UTF8.GetBytes(accountId);
         var currencyBytes = Encoding.UTF8.GetBytes(currency.ToUpperInvariant());
-        // The instant, not the offset: equivalent source offsets hash identically.
+        // Hash the instant, so the same moment at different offsets hashes the same.
         var epochMillis =
             (occurredAt.ToUniversalTime().Ticks - DateTime.UnixEpoch.Ticks)
             / TimeSpan.TicksPerMillisecond;

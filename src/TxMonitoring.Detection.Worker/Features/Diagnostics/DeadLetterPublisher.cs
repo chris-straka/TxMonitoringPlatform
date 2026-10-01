@@ -12,8 +12,7 @@ using TxMonitoring.Detection.Worker.Infrastructure;
 namespace TxMonitoring.Detection.Worker.Features.Diagnostics;
 
 /// <summary>
-/// The small transport seam keeps DLQ construction and acknowledgement behavior testable without
-/// requiring a Kafka broker.
+/// Transport seam so DLQ construction and acknowledgement handling can be tested without Kafka.
 /// </summary>
 public interface IDeadLetterTransport
 {
@@ -48,10 +47,9 @@ public interface IDeadLetterPublisher
 }
 
 /// <summary>
-/// Publishes unusable source records to a separate Kafka topic before their source offsets are
-/// committed. A failed or ambiguous acknowledgement is an exception, so the consumer rewinds and
-/// retries the source record. This makes quarantine at-least-once; consumers should deduplicate on
-/// the stable SourceIdentity when an ACK was persisted but not observed.
+/// Publishes unusable source records to the DLQ topic before their offsets are committed.
+/// A failed or ambiguous acknowledgement throws, so the consumer rewinds and retries. The DLQ is
+/// therefore at-least-once; readers deduplicate on SourceIdentity.
 /// </summary>
 public sealed class DeadLetterPublisher(
     IDeadLetterTransport transport,
@@ -78,8 +76,7 @@ public sealed class DeadLetterPublisher(
         var traceParent = envelope.TraceParent;
         var message = new Message<string, string>
         {
-            // The identity is stable across source retries. Kafka may contain duplicate DLQ
-            // records after an ambiguous ACK, but downstream tooling can collapse them by key.
+            // Stable across source retries, so duplicates after an ambiguous ACK collapse by key.
             Key = envelope.SourceIdentity,
             Value = JsonSerializer.Serialize(envelope, JsonOptions),
             Headers =

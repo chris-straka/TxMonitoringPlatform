@@ -19,8 +19,8 @@ public sealed class TransportSecurityOptions : IValidatableObject
 
     public string ClientCertificatePath { get; set; } = string.Empty;
 
-    // Prefer an injected secret in real deployments. The Compose-only development certificate
-    // deliberately uses an empty password because its private key lives in an isolated volume.
+    // Inject a secret in real deployments. The Compose development certificate has an empty
+    // password because its private key lives in an isolated volume.
     public string? ClientCertificatePassword { get; set; }
 
     public string TrustedServerCaPath { get; set; } = string.Empty;
@@ -58,13 +58,12 @@ public class BufferOptions
     [Range(1, 100_000_000)]
     public int MaxDepth { get; set; }
 
-    // A retry after this window is treated as a new submission. The sensor's HTTP retry policy
-    // is measured in seconds; retaining markers for hours leaves ample ambiguity coverage while
-    // keeping this transient edge database bounded.
+    // A retry after this window is treated as a new submission. Generator retries span seconds,
+    // so hours of retention covers them while keeping the database bounded.
     [Range(1, 8_760)]
     public int SettledIdRetentionHours { get; set; }
 
-    // Rejected payloads are forensic evidence, not an unbounded second queue.
+    // Rejected payloads are kept for inspection, bounded by age and row count.
     [Range(1, 8_760)]
     public int QuarantineRetentionHours { get; set; }
 
@@ -76,7 +75,7 @@ public class UploaderOptions
 {
     public const string Section = "Uploader";
 
-    // Field bounds make 1,000 readings comfortably smaller than gRPC's default 4 MiB limit.
+    // With the field bounds, 1,000 transactions stay well under gRPC's default 4 MiB message limit.
     [Range(1, 1_000)]
     public int BatchSize { get; set; }
 
@@ -89,8 +88,9 @@ public class UploaderOptions
     [Range(1, 3_600)]
     public int MaxBackoffSeconds { get; set; }
 
-    // Ceiling on one upload stream, so a connection that dies without an RST cannot park the uploader forever.
-    // A TCP keepalive would notice that eventually, but it is an OS-wide knob and it cannot see a server that took the bytes and then stopped answering.
+    // Deadline for one upload call, so a connection that dies without an RST cannot stall the
+    // uploader. TCP keepalive is OS-wide and cannot detect a server that took the bytes and then
+    // stopped answering.
     [Range(1, 600)]
     public int UploadTimeoutSeconds { get; set; }
 }

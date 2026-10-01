@@ -6,40 +6,38 @@ public class GatewayOptions
 {
     public const string Section = "Gateway";
 
-    // These annotations run at runtime (after environment vars are provided)
     [Required(AllowEmptyStrings = false)]
     [Url]
     public string Url { get; set; } = string.Empty;
 }
 
 /// <summary>
-/// Deterministic load scenarios. Amounts stay inside documented bounds and the default
-/// steady cadence stays below every velocity threshold, so the demo starts quiet and each
-/// scenario exercises a named rule or combination.
+/// Deterministic load scenarios. The default steady cadence stays below every velocity
+/// threshold, so the demo starts quiet and each other scenario exercises a named rule.
 /// </summary>
 public enum GeneratorScenario
 {
     /// <summary>
-    /// 1k–5k minor units at the configured cadence. Below the absolute, spike (after
-    /// warm-up), count, and sum thresholds: no review expected.
+    /// 1k–5k minor units at the configured cadence. Below the absolute, spike (after warm-up),
+    /// count, and sum thresholds, so no review is expected.
     /// </summary>
     Steady,
 
     /// <summary>
-    /// 300k–500k minor units at the configured cadence. Fires amount.absolute_high only,
-    /// which is below the review threshold alone: sub-threshold evidence is persisted.
+    /// 300k–500k minor units at the configured cadence. Fires amount.absolute_high only, which
+    /// alone scores below review, so the evidence is persisted without an alert.
     /// </summary>
     HighAmount,
 
     /// <summary>
     /// 2k–4k baseline with every 12th event at 20k–40k. The spike stays below the absolute
-    /// threshold to isolate the per-account detector signal.
+    /// threshold so only the per-account detector fires.
     /// </summary>
     AccountSpike,
 
     /// <summary>
-    /// 8k–12k minor units at up to 2s per-account cadence. Trips both velocity rules
-    /// (count and five-minute sum) for a velocity-family alert.
+    /// 8k–12k minor units at up to 2s per-account cadence. Trips both velocity rules (count and
+    /// five-minute sum).
     /// </summary>
     Burst,
 
@@ -57,17 +55,16 @@ public class TransactionGeneratorOptions : IValidatableObject
     public int AccountCount { get; set; }
 
     /// <summary>
-    /// Per-account cadence in seconds. Burst scenarios compress this down to
-    /// <see cref="MaxBurstIntervalSeconds"/>; the default steady cadence stays below
-    /// every velocity threshold.
+    /// Per-account cadence in seconds. Burst scenarios cap it at
+    /// <see cref="MaxBurstIntervalSeconds"/>.
     /// </summary>
     [Range(1, 3_600)]
     public int IntervalSeconds { get; set; }
 
     public const int MaxBurstIntervalSeconds = 2;
 
-    // Number of submissions in the Channel before TryWrite starts dropping them.
-    // This is only a validation range, see appsettings.json / compose for the configured value
+    // Channel capacity before TryWrite starts dropping. The configured value is in
+    // appsettings.json and compose.
     [Range(1, 10_000_000)]
     public int BufferCapacity { get; set; }
 

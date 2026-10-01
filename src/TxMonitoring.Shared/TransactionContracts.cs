@@ -4,21 +4,20 @@ using System.Text.Json.Serialization;
 namespace TxMonitoring.Shared;
 
 /// <summary>
-/// One named bound for money, enforced at gateway admission, ingestion, the
-/// Kafka-consumer validator, and by a Postgres check constraint.
+/// Shared field bounds, enforced at gateway admission, ingestion, the Kafka consumer, and a
+/// Postgres check constraint.
 /// </summary>
 public static class TransactionLimits
 {
     /// <summary>
-    /// Maximum attempted debit in minor units (1,000,000,000.00 CAD). Amounts are
-    /// C# long / protobuf int64 / SQLite INTEGER / Postgres bigint end to end.
-    /// Sums use checked integer arithmetic only.
+    /// Maximum attempted debit in minor units (1,000,000,000.00 CAD). Amounts are 64-bit
+    /// integers end to end, and sums use checked arithmetic.
     /// </summary>
     public const long MaxAmountMinor = 100_000_000_000L;
 
     /// <summary>
-    /// Maximum sequence number. 2^53 - 1 keeps the JSON representation exact in
-    /// JavaScript, where the dashboard validates Number.isSafeInteger.
+    /// Maximum sequence number. 2^53 - 1 keeps the value exact in JavaScript, where the
+    /// dashboard checks Number.isSafeInteger.
     /// </summary>
     public const long MaxSequenceNumber = 9_007_199_254_740_991L;
 
@@ -31,9 +30,8 @@ public static class TransactionLimits
 }
 
 /// <summary>
-/// The accepted currency set lives here, once. Gateway, ingestion, detection,
-/// the generator, tests, and policy must not carry independent lists; adding a
-/// currency is a coordinated contract/config/policy change.
+/// The single accepted currency set. Other components read it rather than keeping their own
+/// lists, so adding a currency is a coordinated contract, config, and policy change.
 /// </summary>
 public static class TransactionCurrencies
 {
@@ -49,9 +47,8 @@ public static class TransactionCurrencies
 public static class TransactionJson
 {
     /// <summary>
-    /// Web defaults: camel-case wire names, case-insensitive reads. A shared
-    /// record type per payload means a renamed field breaks the build instead of
-    /// silently deserializing a missing value as zero.
+    /// Web defaults: camel-case names and case-insensitive reads. Sharing one record type per
+    /// payload makes a renamed field a build error instead of a silent zero.
     /// </summary>
     public static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web);
 }
@@ -60,11 +57,9 @@ public static class TransactionJson
 /// The JSON value carried by the transaction-events Kafka topic (v1).
 /// </summary>
 /// <remarks>
-/// Closed and versioned: changing a name, type, or meaning requires a schema
-/// version decision and updated golden fixtures. Deserialization binds the
-/// positional constructor, so a renamed C# member is a compiler error, not a
-/// silent default. ReceivedAt is delivery metadata stamped once per Kafka
-/// publication attempt; it is not part of payload identity.
+/// Changing a field's name, type, or meaning needs a schema version decision and updated golden
+/// fixtures. Deserialization binds the positional constructor, so a renamed member fails to
+/// compile. ReceivedAt is stamped per publish attempt and is not part of payload identity.
 /// </remarks>
 public sealed record TransactionEvent(
     [property: JsonPropertyName("messageId")] string MessageId,

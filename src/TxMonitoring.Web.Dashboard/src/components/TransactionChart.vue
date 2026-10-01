@@ -19,8 +19,8 @@ const chartOptions = computed<Highcharts.Options>(() => {
   }
   return {
     title: { text: 'Live Transaction Amounts (minor units)' },
-    // Event time, so transactions drained after an outage land where they happened
-    // rather than bunching up at the moment the buffer flushed.
+    // Event time, so transactions drained after an outage plot when they happened instead of
+    // bunching up at the flush.
     xAxis: { type: 'datetime' },
     yAxis: { title: { text: 'Amount (minor units)' } },
     series: [...byAccount].map(

@@ -5,25 +5,22 @@ option csharp_namespace = "TxMonitoring.Ingestion.V1";
 
 import "google/protobuf/timestamp.proto";
 
-// Capture-gateway <-> ingestion API. This carries an *event feed* for monitoring;
-// in payments "capture" also means requesting settlement after an authorisation,
-// which this project never performs.
+// Capture gateway to ingestion API. This carries an event feed for monitoring. "Capture"
+// here does not mean the payments sense of settling an authorisation.
 service TransactionIngestion {
   // Unary
   rpc UploadTransactions (UploadTransactionsRequest) returns (IngestResponse);
 }
 
-// One message carries a whole batch of transactions, bounded by the server's
-// configured MaxReceiveMessageSize (default 4 MiB). Protobuf varints and bounded
-// strings vary in size, so capacity is proven by a worst-valid-batch size test,
-// not by fixed per-record byte arithmetic.
+// One message carries a whole batch, bounded by the server's MaxReceiveMessageSize
+// (default 4 MiB). Varints and strings vary in size, so a test checks the largest valid
+// batch against that limit.
 message UploadTransactionsRequest {
   repeated TransactionRecord transactions = 1;
 }
 
 // One monitored observation of a synthetic outbound debit attempt.
-// AmountMinor is integer minor units (e.g. cents); risk is computed downstream
-// and is never an input field.
+// AmountMinor is integer minor units (e.g. cents). Risk is computed downstream, not sent.
 message TransactionRecord {
   // UUID minted by the synthetic origin; the idempotency key end to end.
   string message_id = 1;
@@ -37,10 +34,10 @@ message TransactionRecord {
   // Origin event time, millisecond resolution.
   google.protobuf.Timestamp occurred_at = 4;
 
-  // Attempted debit amount, positive integer minor units, bounded by policy.
+  // Attempted debit in positive integer minor units, bounded by policy.
   int64 amount_minor = 5;
 
-  // Uppercase three-letter code; v1 accepts CAD only.
+  // Uppercase three-letter code. Only CAD is accepted today.
   string currency = 6;
 
   // W3C trace context, carried as a Kafka header after ingestion.
@@ -48,10 +45,9 @@ message TransactionRecord {
 }
 
 message IngestResponse {
-  // True only when every submitted record was classified accepted or permanently
-  // rejected. False when transient/internal/Kafka failures leave IDs unnamed and
-  // still in gateway custody. "Accepted" means Kafka acknowledged custody; it is
-  // never a payment approval or authorisation decision.
+  // True only when every submitted record was classified as accepted or permanently
+  // rejected. False when a transient failure left IDs unnamed and still with the gateway.
+  // "Accepted" means Kafka acknowledged the write, not a payment approval.
   bool complete = 1;
 
   repeated string accepted_message_ids = 2;
@@ -59,6 +55,5 @@ message IngestResponse {
   repeated string rejected_message_ids = 3;
 }
 
-// Field numbers are part of the wire contract. accepted_message_ids = 2 and
-// rejected_message_ids = 3 are frozen; the ingestion descriptor suite pins every
-// service, RPC, field number, cardinality, and scalar/message type.
+// Field numbers are part of the wire contract and are frozen. The ingestion descriptor
+// tests pin every service, RPC, field number, cardinality, and type.

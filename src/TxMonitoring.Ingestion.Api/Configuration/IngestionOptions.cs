@@ -25,16 +25,17 @@ public class GrpcOptions
     public const int DefaultMaxReceiveMessageSizeBytes = 4_194_304;
 
     /// <summary>
-    /// Server-side cap on one UploadTransactions call. The uploader's batch bound
-    /// stays below this; a worst-valid-batch size test proves the margin using the
-    /// same shared field limits instead of fixed per-record byte arithmetic.
+    /// Server-side cap on one UploadTransactions call.
     /// </summary>
+    /// <remarks>
+    /// The uploader's batch bound stays below this. A test builds the largest valid batch from
+    /// the shared field limits to check the margin.
+    /// </remarks>
     [Range(65_536, 67_108_864)]
     public int MaxReceiveMessageSizeBytes { get; set; } = DefaultMaxReceiveMessageSizeBytes;
 
     /// <summary>
-    /// A missing section binds nothing, so fall back to code defaults instead of
-    /// returning null into startup wiring that dereferences the result.
+    /// Binds the section, falling back to code defaults when the section is missing.
     /// </summary>
     internal static GrpcOptions Read(Microsoft.Extensions.Configuration.IConfiguration configuration) =>
         configuration.GetSection(Section).Get<GrpcOptions>() ?? new GrpcOptions();

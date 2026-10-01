@@ -19,8 +19,7 @@ async function mountApp(initialRoute: string) {
   const wrapper = mount(App, {
     global: {
       plugins: [createPinia(), router],
-      // Highcharts needs a real canvas/SVG host; stub the chart and let the
-      // router-flow assertions focus on navigation and store-driven content.
+      // Highcharts needs a real SVG host, so stub the chart.
       stubs: { Chart: true },
     },
   })

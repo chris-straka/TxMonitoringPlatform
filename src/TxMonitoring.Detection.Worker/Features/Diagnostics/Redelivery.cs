@@ -1,10 +1,8 @@
 namespace TxMonitoring.Detection.Worker.Features.Diagnostics;
 
 /// <summary>
-/// The two terminal answers to "this MessageId is already stored".
-/// Duplicate replays are no-ops; conflicting immutable content under one
-/// MessageId is routed to the dead-letter queue, never overwritten and
-/// never silently merged.
+/// The two outcomes when a MessageId is already stored. A duplicate replay is a no-op.
+/// Different content under the same MessageId goes to the dead-letter queue and is not merged.
 /// </summary>
 public enum RedeliveryOutcome
 {
@@ -13,9 +11,8 @@ public enum RedeliveryOutcome
 }
 
 /// <summary>
-/// The single implementation of the redelivery decision table, shared by
-/// the pre-insert check and the unique-violation race handler: equal
-/// fingerprints mean the replay carries identical immutable content.
+/// The redelivery decision, shared by the pre-insert check and the unique-violation handler.
+/// Equal fingerprints mean the replay carries identical content.
 /// </summary>
 public static class RedeliveryClassifier
 {

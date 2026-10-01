@@ -8,8 +8,8 @@ namespace TxMonitoring.Capture.Gateway.Features.Buffer;
 /// Adds backwards-compatible tables that EnsureCreated cannot add to an existing SQLite buffer.
 /// </summary>
 /// <remarks>
-/// This creates the target transaction schema only. An industrial-era buffer file is not
-/// migrated: the port starts with fresh volumes, and old tables are never renamed in place.
+/// Only the current schema is created. Buffer files from the earlier telemetry schema are not
+/// migrated, so deployments start with fresh volumes.
 /// </remarks>
 public static class EdgeDatabaseInitializer
 {
@@ -91,8 +91,8 @@ public static class EdgeDatabaseInitializer
             cancellationToken
         );
 
-        // Enforce both bounds immediately after an upgrade/reconfiguration. Normal pruning happens
-        // inside the uploader's settlement transaction.
+        // Apply both bounds at startup in case they changed. Normal pruning happens in the
+        // uploader's settlement transaction.
         var quarantineCutoff = DateTimeOffset.UtcNow.AddHours(
             -bufferOptions.QuarantineRetentionHours
         );

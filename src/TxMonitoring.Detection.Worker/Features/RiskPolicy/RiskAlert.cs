@@ -3,9 +3,9 @@ using System.Text.Json.Serialization;
 namespace TxMonitoring.Detection.Worker.Features.RiskPolicy;
 
 /// <summary>
-/// Velocity evidence as published: aggregates can exceed JavaScript's safe integer even
-/// when one AmountMinor cannot, so both values travel as invariant base-10 strings and
-/// parse with checked long/BigInt conversions. Null when velocity was unavailable.
+/// Velocity evidence as published. Aggregates can exceed JavaScript's safe integer range even
+/// though a single AmountMinor cannot, so both values travel as base-10 strings. Null when
+/// velocity was unavailable.
 /// </summary>
 public sealed record VelocityEvidence(
     [property: JsonPropertyName("count1m")] string Count1m,
@@ -21,11 +21,10 @@ public sealed record DetectorEvidence(
 );
 
 /// <summary>
-/// The closed, versioned risk-alerts payload. Changing a shape or meaning requires a
-/// schema-version decision and updated golden fixtures. SequenceNumber and the individual
-/// AmountMinor stay JSON numbers (their maxima are JavaScript-safe); human-readable
-/// phrases come from a deterministic reason-code map in the UI, never free-form AI advice.
-/// Trace context stays in Kafka headers, not in this value.
+/// The versioned risk-alerts payload. Changing a shape or meaning needs a schema version
+/// decision and updated golden fixtures. SequenceNumber and AmountMinor stay JSON numbers
+/// because their maxima are JavaScript-safe. The UI maps reason codes to fixed phrases, and
+/// trace context travels in Kafka headers.
 /// </summary>
 public sealed record RiskAlert(
     [property: JsonPropertyName("messageId")] string MessageId,

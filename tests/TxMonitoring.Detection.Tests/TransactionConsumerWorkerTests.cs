@@ -67,7 +67,7 @@ public sealed class TransactionConsumerWorkerTests
         Assert.Equal(2_500, @event.AmountMinor);
         Assert.Equal("CAD", @event.Currency);
 
-        // The wire keeps camel-case names; a renamed member must break this, not drift.
+        // Wire names are camel case. A renamed member should fail this test.
         var reserialized = JsonSerializer.Serialize(@event, TransactionJson.Options);
         Assert.Contains("\"messageId\"", reserialized, StringComparison.Ordinal);
         Assert.Contains("\"accountId\"", reserialized, StringComparison.Ordinal);

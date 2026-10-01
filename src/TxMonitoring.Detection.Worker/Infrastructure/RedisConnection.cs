@@ -7,9 +7,8 @@ using TxMonitoring.Detection.Worker.Features.RiskPolicy;
 namespace TxMonitoring.Detection.Worker.Infrastructure;
 
 /// <summary>
-/// One lazy Redis connection shared by the velocity store and the startup warm worker.
-/// A failed connect degrades to null (and retries on the next observation) instead of
-/// failing startup: Redis is derived cache state, never the durable path.
+/// One lazy Redis connection shared by the velocity store and the warmup worker. A failed
+/// connect returns null and retries on the next observation instead of failing startup.
 /// </summary>
 public sealed class RedisConnection(
     IOptions<VelocityOptions> options,

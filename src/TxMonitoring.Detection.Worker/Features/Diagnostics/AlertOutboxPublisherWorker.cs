@@ -15,9 +15,8 @@ namespace TxMonitoring.Detection.Worker.Features.Diagnostics;
 /// Publishes committed review alerts from the Postgres outbox to Kafka.
 /// </summary>
 /// <remarks>
-/// The outbox row already holds the complete deterministic payload: the consumer
-/// committed it in the same Postgres transaction as the decision, so this worker
-/// forwards it unchanged. There is no enrichment step and no network call here.
+/// The consumer committed the complete payload in the same Postgres transaction as the
+/// decision, so this worker forwards it unchanged with no enrichment.
 /// </remarks>
 public sealed class AlertOutboxPublisherWorker(
     IDbContextFactory<AppDbContext> contextFactory,
@@ -89,8 +88,8 @@ public sealed class AlertOutboxPublisherWorker(
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
         var cutoff = now - _publishedRetention;
 
-        // Never expire pending work. Published rows are delivery history, so keeping a bounded
-        // window preserves recent auditability without growing this hot table forever.
+        // Only published rows expire. Keeping a bounded window of them preserves recent history
+        // without letting this hot table grow without limit.
         var deleted = await db
             .AlertOutboxMessages.Where(row =>
                 row.PublishedAt != null && row.PublishedAt < cutoff
@@ -113,9 +112,8 @@ public sealed class AlertOutboxPublisherWorker(
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
 
-        // SKIP LOCKED lets several worker replicas drain the shared outbox without publishing the
-        // same row concurrently. The lock is held through Kafka's ACK; a process crash rolls it
-        // back and makes the row visible for retry.
+        // SKIP LOCKED lets replicas drain the shared outbox without publishing the same row at
+        // once. The lock is held through Kafka's ACK, and a crash rolls it back for retry.
         var candidates = await db
             .AlertOutboxMessages.FromSqlRaw(
                 """

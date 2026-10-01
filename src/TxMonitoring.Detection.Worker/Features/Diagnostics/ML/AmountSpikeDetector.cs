@@ -23,9 +23,9 @@ public class SpikePrediction
 }
 
 /// <summary>
-/// The online spike-detector outcome for one observation. The raw score is a detector
-/// statistic, never a probability; <see cref="IsSpike"/> is one input to the risk policy,
-/// which additionally requires a warm history before the spike rule may fire.
+/// The spike detector's outcome for one observation. The raw score is a detector statistic,
+/// not a probability. <see cref="IsSpike"/> is one input to the risk policy, which also
+/// requires a warm history before the spike rule can fire.
 /// </summary>
 public record AmountSpikeResult(
     bool IsSpike,
@@ -39,13 +39,12 @@ public record AmountSpikeResult(
 /// Owns one online IID detector state per (account, currency) identity.
 /// </summary>
 /// <remarks>
-/// model.zip stores the detector configuration and schema; IID spike detection learns its
-/// reference window online rather than fitting parameters from a training set. Mixing
-/// accounts or currencies in one prediction engine makes one account's amounts become
-/// another's history, so each key gets an isolated engine. A newly created state is warmed
-/// from persisted transactions, which makes restarts and Kafka rebalances converge on the
-/// same recent history. This is a pedagogical per-account baseline, not a fraud model:
-/// real amounts are heavy-tailed, seasonal, and conditional, and IID ignores all of that.
+/// model.zip stores only the detector configuration and schema. The reference window is
+/// learned online, not fitted from training data. Each key gets its own engine because a
+/// shared one would make one account's amounts part of another's history. New state is warmed
+/// from persisted transactions, so restarts and rebalances converge on the same history.
+/// This is a simple per-account baseline, not a fraud model: real amounts are heavy-tailed,
+/// seasonal, and conditional, and an IID detector ignores all of that.
 /// </remarks>
 public sealed class AmountSpikeDetector : IDisposable
 {
@@ -106,8 +105,8 @@ public sealed class AmountSpikeDetector : IDisposable
         }
     }
 
-    // A failed database transaction must not leave the in-memory window one observation ahead
-    // of durable state. The retry recreates this account's engine from Postgres before scoring.
+    // After a failed database transaction the in-memory window is one observation ahead of
+    // Postgres, so the retry rebuilds this account's engine before scoring.
     public void Invalidate(string accountId, string currency) =>
         _states.TryRemove((accountId, currency), out _);
 

@@ -8,11 +8,9 @@ namespace TxMonitoring.Feed.Emulator.Infrastructure;
 /// </summary>
 
 /// <remarks>
-/// Instruments are only read at export time, so anything in between has to survive
-/// The tallies are Counters because a running total carries that gap, a Gauge does not
-///
-/// Depth is a Gauge, since the question is how full the channel is right now
-/// An UpDownCounter needs a matching -1 per dequeue, and one miss stays wrong forever
+/// Tallies are counters because a running total survives the gap between exports. Channel
+/// depth is an observable gauge read from the channel itself; an UpDownCounter would need a
+/// matching decrement per dequeue, and one miss would leave it wrong.
 /// </remarks>
 public sealed class FeedMetrics : IDisposable
 {
@@ -67,7 +65,6 @@ public sealed class FeedMetrics : IDisposable
             description: "End-to-end duration of one dequeued transaction's bounded HTTP delivery policy."
         );
 
-        // Otel SDK calls this every 60s to send the buffer size to the collector
         _meter.CreateObservableGauge(
             "feed.channel.depth",
             () => (long)channel.Reader.Count,
@@ -89,9 +86,6 @@ public sealed class FeedMetrics : IDisposable
             new KeyValuePair<string, object?>("outcome", outcome)
         );
 
-    // The metrics registry holds a reference to every live Meter
-    // So _meter outlives FeedMetrics and keeps reporting
-    // The registry doesn't know when a meter should stop reporting
-    // FeedMetrics does (its own lifetime), so it should dispose of it
+    // The metrics registry keeps every live Meter reporting until it is disposed.
     public void Dispose() => _meter.Dispose();
 }

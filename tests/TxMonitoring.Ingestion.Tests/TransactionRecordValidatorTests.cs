@@ -68,8 +68,7 @@ public sealed class TransactionRecordValidatorTests
     [Fact]
     public void Future_relative_timestamp_is_not_a_permanent_rejection()
     {
-        // A clock that runs ahead can be valid on retry, so the ingestion validator
-        // must not fail it: only the gateway applies a now-relative admission skew bound.
+        // A clock that runs ahead can be valid on retry, so only gateway admission checks skew.
         var future = ValidRecord();
         future.OccurredAt = Timestamp.FromDateTimeOffset(
             TransactionTime.TruncateToMilliseconds(DateTimeOffset.UtcNow.AddHours(1))

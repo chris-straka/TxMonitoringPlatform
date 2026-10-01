@@ -4,11 +4,10 @@ using Microsoft.EntityFrameworkCore.Design;
 namespace TxMonitoring.Detection.Worker.Infrastructure.Data;
 
 /// <summary>
-/// Gives EF's command-line tools a context without starting the two infinite hosted-service loops.
+/// Gives `dotnet ef` a context without starting the hosted services.
 /// </summary>
 /// <remarks>
-/// Runtime configuration remains in Program.cs. This factory exists only in the design package
-/// path used by `dotnet ef`; it reads the same copied appsettings files and environment variables.
+/// It reads the same appsettings files and environment variables as Program.cs.
 /// </remarks>
 public sealed class AppDbContextDesignFactory : IDesignTimeDbContextFactory<AppDbContext>
 {

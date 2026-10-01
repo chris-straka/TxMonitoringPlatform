@@ -6,7 +6,7 @@ using TxMonitoring.Capture.Gateway.Configuration;
 namespace TxMonitoring.Capture.Gateway.Features.Buffer;
 
 /// <summary>
-/// Atomically moves cloud-settled rows out of the live queue.
+/// Atomically moves rows settled by ingestion out of the live queue.
 /// </summary>
 public sealed class BufferSettlementStore(
     EdgeDbContext db,
@@ -17,8 +17,8 @@ public sealed class BufferSettlementStore(
 {
     public const string IngestionRejectionCode = "ingestion_permanent_rejection";
 
-    // IngestResponse carries rejected IDs but no per-reading reason or error code. Store
-    // that limitation explicitly instead of inventing a diagnosis that the gateway cannot know.
+    // The response carries rejected IDs but no reason or error code, so store a generic reason
+    // rather than guess one.
     public const string IngestionRejectionReason =
         "Ingestion named this MessageId as permanently rejected; the current protocol does not provide a per-reading reason.";
 
@@ -51,9 +51,9 @@ public sealed class BufferSettlementStore(
         await mutationGate.EnterAsync(cancellationToken);
         try
         {
-            // Quarantine insert, completion marker, and live-row delete share one transaction. The
-            // receiver holds the same gate while checking queued/settled IDs, so it cannot observe
-            // or create a MessageId in the middle of this state transition.
+            // The quarantine insert, settled marker, and live-row delete share one transaction.
+            // The receiver holds the same gate while checking IDs, so it cannot see a MessageId
+            // mid-transition.
             await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
 
             var settledAt = DateTimeOffset.UtcNow;
@@ -77,9 +77,9 @@ public sealed class BufferSettlementStore(
             );
             db.QuarantinedTransactions.AddRange(
                 rejectedRows
-                    // Older versions could re-admit an ID after its settled marker expired while
-                    // its longer-lived quarantine row remained. Preserve the first forensic copy
-                    // and still let that already-queued duplicate settle instead of wedging here.
+                    // An existing buffer can hold a queued row whose ID is already quarantined.
+                    // Keep the first quarantine copy and let the queued row settle so it does not
+                    // block the queue.
                     .Where(row => !alreadyQuarantinedIds.Contains(row.MessageId))
                     .Select(row => new QuarantinedTransaction
                     {
@@ -103,8 +103,8 @@ public sealed class BufferSettlementStore(
             await db.SaveChangesAsync(cancellationToken);
 
             var settledCutoff = settledAt - _settledIdRetention;
-            // SQLite's EF provider cannot translate DateTimeOffset ordering/comparisons even
-            // though its canonical TEXT representation is sortable for these UTC timestamps.
+            // SQLite's EF provider cannot translate DateTimeOffset comparisons, though the stored
+            // UTC text sorts correctly.
             await db.Database.ExecuteSqlInterpolatedAsync(
                 $"""
                 DELETE FROM "SettledMessages"
@@ -122,8 +122,8 @@ public sealed class BufferSettlementStore(
                 cancellationToken
             );
 
-            // The time bound controls usefulness; this hard count bound controls disk growth even
-            // during a sustained rejection storm. SQLite reuses the pages released by this delete.
+            // The age bound keeps rows relevant. This count bound caps disk use during a sustained
+            // run of rejections. SQLite reuses the freed pages.
             var quarantineCount = await db.QuarantinedTransactions.CountAsync(
                 cancellationToken
             );
@@ -146,8 +146,8 @@ public sealed class BufferSettlementStore(
 
             await transaction.CommitAsync(cancellationToken);
 
-            // The in-memory depth mirrors only live queue rows. Release after the durable commit;
-            // startup recount repairs it if the process dies between those two operations.
+            // Release only after the commit. If the process dies in between, the startup recount
+            // repairs the depth.
             bufferDepth.Release(settledRows.Count);
         }
         finally

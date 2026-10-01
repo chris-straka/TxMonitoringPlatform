@@ -18,8 +18,8 @@ public class KafkaOptions : IValidatableObject
     [RegularExpression("^[A-Za-z0-9._-]{1,249}$")]
     public string EventsTopic { get; set; } = string.Empty;
 
-    // Web.Api subscribes to this from its own config, so a literal here would leave the
-    // dashboard listening to a topic nothing writes to, with no exception anywhere
+    // Web.Api reads the topic name from its own config. A hardcoded name here could drift from
+    // it and leave the dashboard silently listening to an unused topic.
     [Required(AllowEmptyStrings = false)]
     [RegularExpression("^[A-Za-z0-9._-]{1,249}$")]
     public string AlertsTopic { get; set; } = string.Empty;

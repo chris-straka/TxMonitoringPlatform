@@ -50,14 +50,13 @@ builder
     .Bind(builder.Configuration.GetSection(VelocityOptions.Section))
     .ValidateDataAnnotations()
     .ValidateOnStart();
-// Needed during registration, before the sp container exists.
+// Read directly because registration runs before the service provider exists.
 var otel = builder.Configuration.GetSection(OTelOptions.Section).Get<OTelOptions>()!;
 var kafka = builder.Configuration.GetSection(KafkaOptions.Section).Get<KafkaOptions>()!;
 var pgConnectionString = builder.Configuration.GetConnectionString("TxMonitoringDb");
 ArgumentException.ThrowIfNullOrWhiteSpace(pgConnectionString);
 #endregion
 
-// Setup DB
 builder.Services.AddPooledDbContextFactory<AppDbContext>(options =>
     options.UseNpgsql(pgConnectionString)
 );
@@ -90,7 +89,6 @@ builder
 builder.Services.AddSingleton<WorkerMetrics>();
 builder.Services.AddSingleton<DetectionConsumerReadiness>();
 
-// Kafka
 builder.Services.AddSingleton(sp =>
 {
     var logger = sp.GetRequiredService<ILogger<IProducer<string, string>>>();
@@ -137,34 +135,31 @@ builder
         tags: ["ready"]
     );
 
-// The online per-account spike detector artifact, built for the amount feature.
 builder.Services.AddSingleton(
     new AmountSpikeDetector(Path.Combine(AppContext.BaseDirectory, "model.zip"))
 );
 
-// One clock for the process; unit tests substitute a manual TimeProvider.
+// Injected so tests can substitute a manual TimeProvider.
 builder.Services.AddSingleton(TimeProvider.System);
 
-// Sliding-window velocity over Redis. The store degrades internally when Redis is
-// unreachable, so ingestion and Postgres never depend on it being up.
+// The velocity store degrades internally when Redis is unreachable, so the consumer and the
+// Postgres write do not depend on Redis.
 builder.Services.AddSingleton<RedisConnection>();
 builder.Services.AddSingleton<ITransactionHistoryRepository, TransactionHistoryRepository>();
 builder.Services.AddSingleton<IVelocityStore, RedisVelocityStore>();
 
-// The warmup runs before the consumer so windows are pre-materialized; it exits after
+// Registered before the consumer so windows are warm when consumption starts. It exits after
 // one pass and sets no rebuilt flags, leaving per-key completion to the lazy path.
 builder.Services.AddHostedService<VelocityWarmupWorker>();
 
-// A hosted service, so the consume loop follows the app lifecycle without blocking it.
 builder.Services.AddHostedService<TransactionConsumerWorker>();
 builder.Services.AddHostedService<AlertOutboxPublisherWorker>();
 
 var app = builder.Build();
 
-// One-shot schema owner for production (Helm migration Job). Exits after applying
-// migrations without starting the consumer/outbox hosted services. Workers never migrate
-// at runtime outside Development, so replicas cannot race; they stay unready on the
-// postgres_migrations readiness check until this Job applies the schema.
+// Production schema owner, run as the Helm migration Job. It applies migrations and exits
+// without starting the hosted services. Outside Development, workers do not migrate, so
+// replicas cannot race; they stay unready until this Job has applied the schema.
 if (args.Contains("--migrate-and-exit", StringComparer.Ordinal))
 {
     using var migrateScope = app.Services.CreateScope();
@@ -198,7 +193,7 @@ if (args.Contains("--migrate-and-exit", StringComparer.Ordinal))
     }
 }
 
-// Migrate on startup for dev
+// Development migrates on startup instead of running the migration Job.
 if (app.Environment.IsDevelopment())
 {
     using var scope = app.Services.CreateScope();

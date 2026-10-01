@@ -8,9 +8,8 @@ using TxMonitoring.Shared;
 namespace TxMonitoring.Detection.Worker.Features.RiskPolicy;
 
 /// <summary>
-/// Per-currency demo thresholds for the v1 risk policy. These values are illustrative:
-/// they exercise named demo scenarios and are not derived from loss data. They must not
-/// be called production defaults.
+/// Per-currency thresholds for the risk policy. The values are illustrative: they exercise
+/// the demo scenarios and are not derived from loss data.
 /// </summary>
 public sealed class CurrencyRiskRules
 {
@@ -63,8 +62,8 @@ public sealed class RiskPolicyOptions : IValidatableObject
 
     public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
     {
-        // Policy must cover exactly the contract's accepted currencies: an accepted currency
-        // without rules (or rules for a currency nothing accepts) is a configuration bug.
+        // Rules must cover exactly the accepted currencies. A gap or an extra entry is a
+        // configuration bug.
         var configured = RulesByCurrency.Keys.ToHashSet(StringComparer.Ordinal);
         if (!configured.SetEquals(TransactionCurrencies.Supported))
         {
@@ -99,10 +98,10 @@ public sealed class RiskPolicyOptions : IValidatableObject
 }
 
 /// <summary>
-/// Canonical content hash of the effective policy configuration. A friendly
-/// <see cref="RiskPolicyOptions.PolicyVersion"/> label cannot stand alone because operators
-/// can change configuration without changing a label; any effective threshold, point,
-/// family-cap, transform, or alert-threshold change must change this hash (proven by test).
+/// Content hash of the effective policy configuration.
+/// <see cref="RiskPolicyOptions.PolicyVersion"/> is not enough on its own because operators
+/// can change configuration without changing the label. Tests check that every threshold,
+/// point, cap, transform, and alert-threshold change alters the hash.
 /// </summary>
 public static class RiskPolicyHash
 {
@@ -114,8 +113,8 @@ public static class RiskPolicyHash
         builder.Append(policy.AmountFamilyCap.ToString(CultureInfo.InvariantCulture)).Append('|');
         builder.Append(policy.VelocityFamilyCap.ToString(CultureInfo.InvariantCulture));
 
-        // Fixed field order and sorted currency keys: the same effective configuration
-        // always hashes identically regardless of dictionary ordering.
+        // Fixed field order and sorted currency keys make the hash independent of dictionary
+        // ordering.
         foreach (var currency in policy.RulesByCurrency.Keys.OrderBy(k => k, StringComparer.Ordinal))
         {
             var rules = policy.RulesByCurrency[currency];

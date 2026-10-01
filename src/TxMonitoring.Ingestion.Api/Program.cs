@@ -30,20 +30,19 @@ using TxMonitoring.Shared;
 //                                        │ Kafka transaction-events │
 //                                        └──────────────────────────┘
 //
-// Keying by AccountId puts an account's transactions on one kafka partition.
-// The reply sorts every id the gateway sent into:
+// Keying by AccountId keeps an account's transactions on one Kafka partition, in order.
+// The reply sorts every ID the gateway sent into:
 //
 //   accepted   the broker acknowledged the write
-//   rejected   this service's validator refused it, so Kafka never saw it
-//   neither    still the gateway's, and it sends it again
+//   rejected   the validator refused it, so it was not produced
+//   neither    the gateway still owns it and will resend it
 //
-// There is exactly one ingestion path: deterministic scenarios enter through the
-// feed and gateway, which keeps the custody claim testable.
+// Test scenarios also enter through the feed and gateway, so this is the only ingestion path.
 // --------------------------------------------------------------------------
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Validated at boot, fails fast (config pecking order: docs/NET.md)
+// Validated at startup so a bad deployment fails fast.
 builder
     .Services.AddOptions<OTelOptions>()
     .Bind(builder.Configuration.GetSection(OTelOptions.Section))
@@ -99,7 +98,7 @@ if (transportSecurity.Enabled)
 
 builder
     .Services.AddOpenTelemetry()
-    .ConfigureResource(resource => resource.AddService(otel.ServiceName)) // resouce => tel metadata
+    .ConfigureResource(resource => resource.AddService(otel.ServiceName))
     .WithLogging(logging => logging.AddOtlpExporter(opt => opt.Endpoint = new Uri(otel.Endpoint)))
     .WithMetrics(metrics =>
         metrics
@@ -120,18 +119,12 @@ builder.Services.AddSingleton<IngestionMetrics>();
 
 builder.Services.AddValidatorsFromAssemblyContaining<TransactionRecordValidator>();
 
-// Gateway's batch (bounded by MaxBatchSize) != Kafka's batches
-// One batch of N transactions -> N kafka msgs (if none rejected)
-// Each kafka msg is key -> AccountId, value -> JSON event
-// These they get batched per partition into record batches
-
-// Setup Kafka
-builder.Services.AddSingleton(sp => // service provider
+// A gateway batch becomes one Kafka message per accepted transaction, keyed by AccountId with a
+// JSON value. The producer then batches messages per partition on its own.
+builder.Services.AddSingleton(sp =>
 {
-    // Loggers can only write, not read
     var logger = sp.GetRequiredService<ILogger<IProducer<string, string>>>();
 
-    // Hover each of these props for tooltip (librdkafka runs locally)
     var config = new ProducerConfig
     {
         BootstrapServers = kafka.BootstrapServers,
@@ -140,14 +133,12 @@ builder.Services.AddSingleton(sp => // service provider
         LingerMs = 20,
         MessageTimeoutMs = 20_000,
         CompressionType = CompressionType.Zstd,
-        // A typo must fail delivery and leave the gateway row retryable, not create a silent
-        // parallel topic that no consumer reads.
+        // A topic typo should fail delivery and leave the gateway row retryable, rather than
+        // create a topic no consumer reads.
         AllowAutoCreateTopics = false,
         // MetadataMaxAgeMs = 5000,
     };
 
-    // You want one producer for each message type (only one here)
-    // <string, string> will use Kafka's default UTF-8 serializers
     return new ProducerBuilder<string, string>(config)
         .SetErrorHandler((_, e) => logger.LogError("Kafka Producer Error: {Reason}", e.Reason))
         .Build();

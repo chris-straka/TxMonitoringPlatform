@@ -3,11 +3,11 @@ using System.Diagnostics;
 namespace TxMonitoring.Detection.Worker.Infrastructure;
 
 /// <summary>
-/// The worker's ActivitySource (.NET's version of OTel's Tracer).
+/// The worker's ActivitySource, the .NET counterpart of an OTel tracer.
 /// </summary>
 /// <remarks>
-/// I need this to grab the span from kafka so I can link to it
-/// autoinstrumentation for kafka is still pre-release
+/// Kafka auto-instrumentation is still pre-release, so the consumer starts its own spans and
+/// links them to the traceparent carried in the message headers.
 /// </remarks>
 public static class WorkerTracing
 {

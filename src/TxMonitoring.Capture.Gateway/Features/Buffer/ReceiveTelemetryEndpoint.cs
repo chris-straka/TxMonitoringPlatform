@@ -11,7 +11,7 @@ namespace TxMonitoring.Capture.Gateway.Features.Buffer;
 
 /// <summary>
 /// Receives one transaction from the feed generator and durably buffers it.
-/// A 202 is the custody promise: the transaction is on local disk (WAL + FULL fsync).
+/// A 202 means the transaction is on local disk under WAL with synchronous=FULL.
 /// </summary>
 public static class ReceiveTelemetryEndpoint
 {
@@ -19,8 +19,7 @@ public static class ReceiveTelemetryEndpoint
 
     public static void MapReceiverEndpoints(this IEndpointRouteBuilder app)
     {
-        // ILogger<T> is the normal injection method but a static class cannot be T. Resolve only
-        // the singleton factory here; EdgeDbContext remains a per-request handler parameter.
+        // A static class cannot be the T in ILogger<T>, so create the logger from the factory.
         var logger = app
             .ServiceProvider.GetRequiredService<ILoggerFactory>()
             .CreateLogger(typeof(ReceiveTelemetryEndpoint).FullName!);
@@ -58,12 +57,10 @@ public static class ReceiveTelemetryEndpoint
                 await mutationGate.EnterAsync(http.RequestAborted);
                 try
                 {
-                    // A MessageId can be queued, recently settled, or retained in rejection
-                    // quarantine. Check all durable states before reserving capacity so delayed
-                    // retries stay idempotent even when their shorter-lived settled marker expired.
-                    // MessageId selects the record; the fingerprint proves the retry carries the
-                    // same immutable content. A different fingerprint is a 409 conflict: the
-                    // original is preserved and never overwritten.
+                    // A MessageId can be queued, recently settled, or quarantined. Check all three
+                    // before reserving capacity so a delayed retry stays idempotent. A matching
+                    // fingerprint is a duplicate. A different one is a 409, and the original row
+                    // is kept.
                     var live = await db.BufferedTransactions.FirstOrDefaultAsync(
                         x => x.MessageId == canonicalMessageId,
                         http.RequestAborted
@@ -94,8 +91,8 @@ public static class ReceiveTelemetryEndpoint
                     {
                         if (quarantined.PayloadFingerprint.SequenceEqual(fingerprint))
                         {
-                            // Terminal rejection: ingestion already refused this exact content
-                            // permanently. A stable 422, never a requeue and never a 202.
+                            // Ingestion already rejected this exact content permanently, so answer
+                            // with a stable 422 instead of requeueing it.
                             metrics.Duplicates.Add(1);
                             logger.LogDebug(
                                 "Quarantined MessageId {MessageId} retried; returning terminal rejection.",
@@ -136,8 +133,7 @@ public static class ReceiveTelemetryEndpoint
                         return Results.Conflict(new { error = "idempotency_conflict" });
                     }
 
-                    // Reserve before touching SQLite. Compare-exchange makes this ceiling exact
-                    // across concurrent HTTP requests; a failed insert releases the reservation.
+                    // Reserve before writing to SQLite. A failed insert releases the reservation.
                     var maxDepth = bufferOptions.Value.MaxDepth;
                     if (!bufferDepth.TryReserve(maxDepth))
                     {
@@ -172,9 +168,9 @@ public static class ReceiveTelemetryEndpoint
                         FingerprintVersion = TxMonitoring.Shared.TransactionFingerprint.Version,
                         AccountId = req.AccountId,
                         SequenceNumber = req.SequenceNumber,
-                        // Equivalent source offsets are not different data: store the instant in UTC.
+                        // The same instant at a different offset is the same data, so store UTC.
                         OccurredAt = req.OccurredAt.ToUniversalTime(),
-                        BufferedAt = DateTimeOffset.UtcNow, // Never leaves the gateway.
+                        BufferedAt = DateTimeOffset.UtcNow, // gateway-local, not sent upstream
                         TraceParent = traceParent,
                         AmountMinor = req.AmountMinor,
                         Currency = req.Currency,
@@ -184,15 +180,13 @@ public static class ReceiveTelemetryEndpoint
 
                     try
                     {
-                        // One SaveChanges == one transaction == one fsync (synchronous=FULL).
-                        // No CancellationToken on purpose: after reserving the transaction, a lost HTTP
-                        // connection makes the result ambiguous and the durable write must finish.
+                        // One SaveChanges is one SQLite transaction and one fsync. No cancellation
+                        // token: once capacity is reserved, a dropped client connection should not
+                        // abort the durable write.
                         await db.SaveChangesAsync();
 
                         metrics.Received.Add(1);
 
-                        // 202 means accepted but not finished: the transaction is durable locally and
-                        // still has to reach ingestion.
                         return Results.Accepted();
                     }
                     catch (DbUpdateException ex) when (IsDuplicateMessageId(ex))
@@ -219,25 +213,24 @@ public static class ReceiveTelemetryEndpoint
             }
         );
 
-        // Same number as capture.queue.depth gauge, readable without Prometheus
-        // Reports disk not cache
+        // Counts rows on disk, not the in-memory BufferDepth, so it can be checked without
+        // Prometheus.
         app.MapGet(
             "/buffer",
             async (EdgeDbContext db) =>
-                // This is an anonymous type specifying a response body
                 Results.Ok(new { queueDepth = await db.BufferedTransactions.CountAsync() })
         );
 
-        // A bounded forensic view of permanent ingestion rejections. Limit is deliberately capped so
-        // an operator cannot make one request materialize the entire quarantine in memory.
+        // Bounded view of permanent ingestion rejections. The cap keeps one request from loading
+        // the whole quarantine into memory.
         app.MapGet(
             "/buffer/quarantine",
             async (int? limit, EdgeDbContext db, CancellationToken cancellationToken) =>
             {
                 var take = Math.Clamp(limit ?? 100, 1, 200);
                 var total = await db.QuarantinedTransactions.CountAsync(cancellationToken);
-                // SQLite's EF provider cannot translate DateTimeOffset ordering. Keep the limit
-                // parameterized in raw SQL, then shape at most 200 rows in memory.
+                // SQLite's EF provider cannot translate DateTimeOffset ordering, so sort and limit
+                // in raw SQL with the limit parameterized.
                 var rows = await db
                     .QuarantinedTransactions.FromSqlInterpolated(
                         $"""
@@ -272,8 +265,7 @@ public static class ReceiveTelemetryEndpoint
         );
     }
 
-    // SQLite reports every constraint failure as error code 19 (SQLITE_CONSTRAINT)
-    // 2067 is the extended code for UNIQUE, and MessageId owns the only unique index here
+    // 2067 is SQLITE_CONSTRAINT_UNIQUE. MessageId has the only unique index on this table.
     private static bool IsDuplicateMessageId(DbUpdateException ex) =>
         ex.InnerException is SqliteException { SqliteExtendedErrorCode: 2067 };
 }

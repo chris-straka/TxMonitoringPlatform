@@ -3,12 +3,12 @@ using Microsoft.EntityFrameworkCore;
 namespace TxMonitoring.Detection.Worker.Features.Diagnostics;
 
 /// <summary>
-/// An anomaly alert waiting to be published to Kafka.
+/// A risk alert waiting to be published to Kafka.
 /// </summary>
 /// <remarks>
-/// The telemetry row and this row are committed by one Postgres transaction. Publishing happens
-/// later and is at-least-once: a crash after Kafka acknowledges but before PublishedAt commits can
-/// send a duplicate, so MessageId remains the consumer's idempotency key.
+/// This row commits in the same Postgres transaction as the monitored transaction. Publishing
+/// is at-least-once: a crash after Kafka acknowledges but before PublishedAt commits sends a
+/// duplicate, so consumers dedupe on MessageId.
 /// </remarks>
 [Index(nameof(MessageId), IsUnique = true)]
 [Index(nameof(PublishedAt), nameof(CreatedAt))]

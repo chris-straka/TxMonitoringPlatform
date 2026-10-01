@@ -8,8 +8,8 @@ using TxMonitoring.Web.Api.Configuration;
 namespace TxMonitoring.Web.Api.Infrastructure;
 
 /// <summary>
-/// Checks broker connectivity and both topics independently of message traffic. This lets an idle
-/// dashboard recover readiness as soon as Kafka recovers, without waiting for a new reading.
+/// Checks broker connectivity and both topics independently of message traffic, so an idle
+/// dashboard becomes ready again as soon as Kafka recovers.
 /// </summary>
 public sealed class KafkaTopicsHealthCheck(
     IAdminClient adminClient,

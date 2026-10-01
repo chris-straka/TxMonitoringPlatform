@@ -3,7 +3,7 @@ using System.Diagnostics.Metrics;
 namespace TxMonitoring.Detection.Worker.Infrastructure;
 
 /// <summary>
-/// The worker's Otel's instruments.
+/// The worker's OpenTelemetry instruments.
 /// </summary>
 public sealed class WorkerMetrics : IDisposable
 {
@@ -146,7 +146,7 @@ public sealed class WorkerMetrics : IDisposable
             description: "Transactions skipped because the MessageId was already persisted."
         );
 
-        // Distribution of per-transaction generator to DB times (bucketed)
+        // Time from origin event to the Postgres write, per transaction.
         Lag = _meter.CreateHistogram<double>(
             "detection.transaction.lag_seconds",
             unit: "s",
@@ -173,7 +173,7 @@ public sealed class WorkerMetrics : IDisposable
     public Counter<long> AlertsPublished { get; }
     public Histogram<double> Lag { get; }
 
-    // A method rather than a public counter, so every sample carries the tag
+    // A method rather than a public counter so every sample carries the tag.
     public void RecordDuplicate(string detectedBy) =>
         _duplicates.Add(1, new KeyValuePair<string, object?>("detected_by", detectedBy));
 

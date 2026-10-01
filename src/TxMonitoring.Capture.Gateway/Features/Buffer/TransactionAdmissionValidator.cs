@@ -3,15 +3,17 @@ using TxMonitoring.Shared;
 namespace TxMonitoring.Capture.Gateway.Features.Buffer;
 
 /// <summary>
-/// Applies permanent, retry-independent checks before a transaction can consume durable capacity.
+/// Applies permanent checks before a transaction can take durable buffer capacity.
 /// </summary>
 public static class TransactionAdmissionValidator
 {
     /// <summary>
-    /// Origin event time may not run ahead of the gateway clock by more than this. A broken
-    /// generator clock is malformed at admission; ingestion must never turn a merely early
-    /// timestamp into a permanent rejection because the same record can be valid on retry.
+    /// How far origin event time may run ahead of the gateway clock.
     /// </summary>
+    /// <remarks>
+    /// The check belongs here, at admission. Ingestion cannot reject an early timestamp
+    /// permanently because the same record may be valid on retry.
+    /// </remarks>
     public static readonly TimeSpan MaxFutureSkew = TimeSpan.FromMinutes(5);
 
     public static string? Validate(TransactionSubmission submission, out string canonicalMessageId)
@@ -40,8 +42,8 @@ public static class TransactionAdmissionValidator
         if (submission.OccurredAt == default)
             return "occurred_at_is_required";
 
-        // The contract resolution is one millisecond. Equivalent source offsets are not
-        // different data; the instant is compared and normalised to UTC before custody.
+        // The contract resolution is one millisecond. The instant is compared in UTC, so the
+        // source offset does not matter.
         if (submission.OccurredAt.UtcTicks % TimeSpan.TicksPerMillisecond != 0)
             return "occurred_at_must_be_whole_milliseconds";
 

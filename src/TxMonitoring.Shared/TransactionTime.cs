@@ -1,9 +1,8 @@
 namespace TxMonitoring.Shared;
 
 /// <summary>
-/// Origin event-time helpers. The contract resolution is one millisecond: origins must
-/// mint whole-millisecond instants, because validators reject sub-millisecond precision
-/// as malformed rather than silently rounding money-movement evidence.
+/// Origin event-time helpers. Origins mint whole-millisecond instants because validators
+/// reject finer precision rather than silently round it.
 /// </summary>
 public static class TransactionTime
 {

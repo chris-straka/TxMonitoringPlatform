@@ -9,11 +9,9 @@ using Xunit.Abstractions;
 namespace TxMonitoring.Detection.Tests;
 
 /// <summary>
-/// In-process policy throughput: N deterministic evaluations across the
-/// rule mix (below-threshold, absolute-high, spike+velocity review cases),
-/// asserting repeatability and printing decisions/s. This is the evaluation
-/// cost only — detector warm-up, Redis, Kafka, and Postgres are out of the
-/// loop by design, so the number is a ceiling, not an end-to-end claim.
+/// In-process policy throughput over a mix of quiet, absolute-high, and review cases. Asserts
+/// repeatability and prints decisions/s. Detector warm-up, Redis, Kafka, and Postgres are
+/// excluded, so the number is a ceiling, not an end-to-end figure.
 /// </summary>
 public sealed class PolicyThroughputTests
 {
@@ -52,8 +50,8 @@ public sealed class PolicyThroughputTests
         }
         sw.Stop();
 
-        // Same input replays the same decision field for field (Reasons is a
-        // list, so record equality would compare references, not content).
+        // Compared field by field because Reasons is a list, and record equality would compare
+        // its reference.
         var repeat = Evaluate(2_500, policy, hash, velocity);
         Assert.Equal(first.RiskScore, repeat.RiskScore);
         Assert.Equal(first.ReviewRecommended, repeat.ReviewRecommended);

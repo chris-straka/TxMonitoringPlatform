@@ -13,10 +13,9 @@ namespace TxMonitoring.Ingestion.Api.Features.Ingestion;
 /// What ingestion requires of a transaction before it produces to Kafka.
 /// </summary>
 /// <remarks>
-/// Every rule must be something no retry can fix (failures here delete the gateway copy).
-/// A timestamp that is merely "in the future relative to now" can become valid on retry,
-/// so it must never be a permanent rejection here; the gateway applies the now-relative
-/// skew check at admission instead.
+/// A failure here deletes the gateway's copy, so every rule must be one no retry can fix.
+/// A future timestamp can become valid on retry, so the clock-skew check lives at gateway
+/// admission instead.
 /// </remarks>
 public class TransactionRecordValidator : AbstractValidator<TransactionRecord>
 {
@@ -30,17 +29,16 @@ public class TransactionRecordValidator : AbstractValidator<TransactionRecord>
     private const int NanosPerSecond = 1_000_000_000;
     private const int NanosPerMillisecond = 1_000_000;
 
-    // proto3 defaults are either 0 or null
+    // Unset proto3 fields arrive as 0 or empty, so the rules reject those defaults.
     public TransactionRecordValidator()
     {
-        // Detection dedupes on this too
         RuleFor(x => x.MessageId)
             .NotEmpty()
             .MaximumLength(TransactionLimits.MaxMessageIdLength)
             .Must(id => Guid.TryParseExact(id, "D", out _))
             .WithMessage("MessageId must use the canonical GUID format.");
 
-        // The Kafka message key (used for partitions)
+        // Also the Kafka partition key.
         RuleFor(x => x.AccountId)
             .NotEmpty()
             .MaximumLength(TransactionLimits.MaxAccountIdLength)
@@ -48,18 +46,16 @@ public class TransactionRecordValidator : AbstractValidator<TransactionRecord>
             .Must(id => id is null || id == id.Trim())
             .WithMessage("AccountId cannot have leading or trailing whitespace.");
 
-        // 0 should not be possible (generators count from 1); the ceiling keeps the
-        // JSON representation exact in JavaScript.
+        // Generators count from 1. The ceiling keeps the value exact as a JavaScript number.
         RuleFor(x => x.SequenceNumber)
             .GreaterThan(0)
             .LessThanOrEqualTo(TransactionLimits.MaxSequenceNumber);
 
-        // Positive integer minor units within the single named ceiling.
         RuleFor(x => x.AmountMinor)
             .GreaterThan(0)
             .LessThanOrEqualTo(TransactionLimits.MaxAmountMinor);
 
-        // The accepted set lives in shared contract code; v1 accepts CAD only.
+        // The accepted set lives in the shared contracts and is currently CAD only.
         RuleFor(x => x.Currency)
             .Must(TransactionCurrencies.IsSupported)
             .WithMessage("Currency is not a supported three-letter code.");
@@ -71,15 +67,14 @@ public class TransactionRecordValidator : AbstractValidator<TransactionRecord>
             .Must(IsWholeMilliseconds)
             .WithMessage("OccurredAt must be exactly representable as epoch milliseconds.");
 
-        // This becomes a Kafka header. Bounding and parsing it prevents an otherwise valid
-        // transaction from becoming an oversized or malformed downstream message.
+        // Becomes a Kafka header, so it is bounded and parsed to keep the message well formed.
         RuleFor(x => x.Traceparent)
             .MaximumLength(TransactionLimits.MaxTraceParentLength)
             .Must(IsTraceParent)
             .WithMessage("Traceparent is not a valid W3C trace context.");
     }
 
-    // Filters out values from a broken clock
+    // Rejects values a broken clock could produce that Timestamp cannot represent.
     private static bool IsRepresentable(Timestamp? occurredAt) =>
         occurredAt is null
         || (
@@ -88,7 +83,7 @@ public class TransactionRecordValidator : AbstractValidator<TransactionRecord>
             && occurredAt.Nanos is >= 0 and < NanosPerSecond
         );
 
-    // The contract resolution is one millisecond: sub-millisecond precision is malformed.
+    // The contract resolution is one millisecond.
     private static bool IsWholeMilliseconds(Timestamp? occurredAt) =>
         occurredAt is null || occurredAt.Nanos % NanosPerMillisecond == 0;
 

@@ -1,9 +1,9 @@
 namespace TxMonitoring.Capture.Gateway.Features.Buffer;
 
 /// <summary>
-/// What the feed generator sends the gateway: the same six business fields as the
-/// protobuf TransactionRecord. W3C trace context arrives as an HTTP header.
-/// Risk is computed by detection; no producer-provided field is named RiskScore.
+/// What the feed generator sends the gateway: the six business fields of the protobuf
+/// TransactionRecord. Trace context arrives as an HTTP header. Detection computes risk, so
+/// there is no producer-supplied score.
 /// </summary>
 public record TransactionSubmission(
     string MessageId,

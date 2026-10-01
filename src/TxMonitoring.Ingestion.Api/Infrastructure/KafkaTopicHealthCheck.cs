@@ -8,7 +8,7 @@ using TxMonitoring.Ingestion.Api.Configuration;
 namespace TxMonitoring.Ingestion.Api.Infrastructure;
 
 /// <summary>
-/// Proves the configured events topic has usable leaders without producing a probe record.
+/// Checks that the events topic has partition leaders, without producing a probe record.
 /// </summary>
 public sealed class KafkaTopicHealthCheck(
     IAdminClient adminClient,
@@ -27,8 +27,8 @@ public sealed class KafkaTopicHealthCheck(
 
         try
         {
-            // GetMetadata is synchronous, but the native client enforces this timeout. The
-            // readiness request therefore cannot wait indefinitely when Kafka is unavailable.
+            // GetMetadata is synchronous, but the native client enforces this timeout, so
+            // readiness cannot hang when Kafka is down.
             var metadata = adminClient.GetMetadata(
                 kafka.EventsTopic,
                 TimeSpan.FromSeconds(kafka.ReadinessTimeoutSeconds)

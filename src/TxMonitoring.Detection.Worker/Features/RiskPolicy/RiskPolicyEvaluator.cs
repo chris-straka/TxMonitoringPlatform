@@ -7,9 +7,8 @@ using TxMonitoring.Shared;
 namespace TxMonitoring.Detection.Worker.Features.RiskPolicy;
 
 /// <summary>
-/// One fired rule, in the table's fixed rule order, with its metric, invariant observed
-/// value, threshold, and awarded points. Amounts stay base-10 strings so aggregates that
-/// exceed JavaScript's safe integer still round-trip exactly.
+/// One fired rule with its metric, observed value, threshold, and awarded points. Values are
+/// base-10 strings so aggregates beyond JavaScript's safe integer range round-trip exactly.
 /// </summary>
 public sealed record RiskReason(
     [property: JsonPropertyName("code")] string Code,
@@ -20,8 +19,8 @@ public sealed record RiskReason(
 );
 
 /// <summary>
-/// The immutable policy decision for one transaction: a transparent ranking score, not a
-/// calibrated fraud probability. ReviewRecommended means "emit a monitoring alert".
+/// The policy decision for one transaction. The score is a transparent ranking, not a
+/// calibrated fraud probability. ReviewRecommended means a monitoring alert is emitted.
 /// </summary>
 public sealed record RiskDecision(
     int RiskScore,
@@ -32,10 +31,9 @@ public sealed record RiskDecision(
 );
 
 /// <summary>
-/// Deterministic v1 policy: correlated amount signals (absolute, account spike) sum within
-/// one family cap, correlated velocity signals (count, sum) within another, and the two
-/// family contributions add with checked arithmetic capped at 100. Every fired reason is
-/// persisted even below the alert threshold.
+/// Deterministic risk policy. Correlated amount signals (absolute, spike) sum under one family
+/// cap and velocity signals (count, sum) under another. The two families add, capped at 100.
+/// Every fired reason is persisted, even below the alert threshold.
 /// </summary>
 public static class RiskPolicyEvaluator
 {
@@ -76,8 +74,8 @@ public static class RiskPolicyEvaluator
             );
         }
 
-        // The spike rule needs a warm detector history: a cold reference window cannot
-        // distinguish a real deviation from an uninitialized baseline.
+        // A cold reference window cannot tell a real deviation from an empty baseline, so the
+        // spike rule needs a warm history.
         if (
             spike.IsSpike
             && spike.HistoryCount >= AmountSpikeDetector.HistoryLength
@@ -98,8 +96,8 @@ public static class RiskPolicyEvaluator
             );
         }
 
-        // Velocity rules need available evidence. Anything else (unavailable, out-of-order,
-        // rebuilding) is missing evidence, never zero counts: the rules simply do not fire.
+        // Unavailable, out-of-order, or rebuilding velocity is missing evidence, not zero
+        // counts, so the velocity rules do not fire.
         if (velocity.Status == VelocityStatus.Available)
         {
             if (velocity.Count1m!.Value >= rules.Count1mThreshold)

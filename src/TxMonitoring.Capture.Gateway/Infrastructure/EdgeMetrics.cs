@@ -8,14 +8,9 @@ namespace TxMonitoring.Capture.Gateway.Infrastructure;
 /// The gateway's OpenTelemetry instruments.
 /// </summary>
 /// <remarks>
-/// A Counter only climbs and is read as a rate; a Gauge is a level that moves both ways
-///
-/// Depth and oldest-transaction-age are the gauges that make an outage visible
-/// They climb during an outage and drain once there's no more outage
-///
-/// Queue depth is the one value this class does not own, because it also steers load shedding
-/// I don't want application logic to depend on OTel implementation details
-/// It lives in <see cref="BufferDepth"/>, so losing this file costs dashboards, never the ceiling
+/// Buffer depth and oldest-transaction age make an ingestion outage visible: both climb during
+/// one and drain after. Depth itself lives in <see cref="BufferDepth"/> because load shedding
+/// depends on it, and admission should not depend on telemetry code.
 /// </remarks>
 public sealed class EdgeMetrics : IDisposable
 {
@@ -25,8 +20,8 @@ public sealed class EdgeMetrics : IDisposable
     private readonly Counter<long> _uploadFailures;
     private readonly Histogram<double> _uploadDuration;
 
-    // NaN means nothing is buffered, so there is no age to report
-    // A companion bool would need two volatile reads that can disagree, and this needs one
+    // NaN means nothing is buffered. A separate flag would need a second volatile read that
+    // could disagree with this one.
     private double _oldestAgeSeconds = double.NaN;
     private int _ingestionReachable = 1;
 
@@ -64,8 +59,8 @@ public sealed class EdgeMetrics : IDisposable
             description: "Transactions rejected with 429 because the local buffer hit its ceiling."
         );
 
-        // A 400 never reaches capture.transaction.received, so without this a rejected
-        // transaction looks like one the generator never sent
+        // A 400 never reaches capture.transaction.received, so without this counter a rejected
+        // transaction is indistinguishable from one that was never sent.
         Malformed = _meter.CreateCounter<long>(
             "capture.transaction.malformed",
             unit: "{transaction}",
@@ -78,8 +73,8 @@ public sealed class EdgeMetrics : IDisposable
             description: "Transactions dropped because ingestion named them as permanently refused."
         );
 
-        // Tagged by outcome, because unreachable ingestion and ingestion refusing this caller
-        // are one climbing line otherwise, and they need different people to fix them
+        // Tagged by outcome because an unreachable ingestion and a refused caller have different
+        // fixes.
         _uploadFailures = _meter.CreateCounter<long>(
             "capture.upload.failures",
             unit: "{attempt}",
@@ -92,8 +87,6 @@ public sealed class EdgeMetrics : IDisposable
             description: "Duration of one logical gRPC batch attempt, tagged by classified outcome."
         );
 
-        // Observable means OTel calls this at collection time instead of us pushing values
-        // The depth stays owned by BufferDepth, so losing this file costs dashboards, never the ceiling
         _meter.CreateObservableGauge(
             "capture.transaction.buffer_depth",
             () => bufferDepth.Current,
@@ -108,7 +101,7 @@ public sealed class EdgeMetrics : IDisposable
             description: "Age of the oldest unacknowledged transaction. This is the real SLO."
         );
 
-        // A gauge rather than a log line so it can be graphed beside the buffer depth
+        // A gauge so it can be graphed beside buffer depth.
         _meter.CreateObservableGauge(
             "capture.ingestion.reachable",
             () => Volatile.Read(ref _ingestionReachable),
@@ -124,8 +117,7 @@ public sealed class EdgeMetrics : IDisposable
     public Counter<long> Shed { get; }
     public Counter<long> Malformed { get; }
 
-    // A method rather than a public counter, so every sample carries the tag
-    // An untagged Add from somewhere else would land in the same metric with no outcome at all
+    // A method rather than a public counter so every sample carries the outcome tag.
     public void RecordUploadFailure(string outcome) =>
         _uploadFailures.Add(1, new KeyValuePair<string, object?>("outcome", outcome));
 
@@ -135,20 +127,19 @@ public sealed class EdgeMetrics : IDisposable
             new KeyValuePair<string, object?>("outcome", outcome)
         );
 
-    // Volatile because the gauge callbacks read these on OTel's collection thread
-    // A plain write can sit in a register the reader never sees, so the dashboard freezes on a stale value
-    // Not Interlocked, which buys indivisible read-modify-write that neither of these does (docs/Concurrency.md)
+    // Gauge callbacks read these on OTel's collection thread, so writes are volatile. Plain
+    // stores are enough; nothing here needs an atomic read-modify-write.
     public void SetOldestTransactionAge(double seconds) =>
         Volatile.Write(ref _oldestAgeSeconds, seconds);
 
-    // An empty buffer has no oldest transaction, which is not the same as one that is zero seconds old
+    // An empty buffer has no oldest transaction, which differs from one that is zero seconds old.
     public void NoTransactionsBuffered() => Volatile.Write(ref _oldestAgeSeconds, double.NaN);
 
     public void SetIngestionReachable(bool reachable) =>
         Volatile.Write(ref _ingestionReachable, reachable ? 1 : 0);
 
-    // Yielding nothing leaves a gap in the series
-    // Reporting a zero would draw the same flat line as a transaction that arrived this instant
+    // Yields nothing when empty, leaving a gap in the series. A zero would look like a
+    // transaction that just arrived.
     private IEnumerable<Measurement<double>> ObserveOldestTransactionAge()
     {
         var seconds = Volatile.Read(ref _oldestAgeSeconds);

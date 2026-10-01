@@ -5,8 +5,8 @@ using TxMonitoring.Detection.Worker.Infrastructure.Data;
 namespace TxMonitoring.Detection.Worker.Features.RiskPolicy;
 
 /// <summary>
-/// The single repository seam for cold velocity and detector state. Both warm paths read
-/// through here so restarts and rebalances converge on the same recent Postgres rows.
+/// Reads recent history to rebuild velocity and detector state. Both warm paths use it, so
+/// restarts and rebalances converge on the same Postgres rows.
 /// </summary>
 public interface ITransactionHistoryRepository
 {

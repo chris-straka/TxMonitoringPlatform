@@ -1,13 +1,13 @@
 namespace TxMonitoring.Capture.Gateway.Features.Buffer;
 
 /// <summary>
-/// Holds the number of readings in the local buffer and reserves capacity atomically.
+/// Tracks the number of buffered transactions and reserves capacity atomically.
 /// </summary>
 /// <remarks>
-/// SQLite stores no row count, so a COUNT(*) walks every row. Startup seeds this value from
-/// disk; after that every committed insert and delete moves it by a matching delta. A compare-
-/// exchange reservation makes MaxDepth a real ceiling even when several sensor requests arrive
-/// together. A process crash cannot leave this stale because startup counts the durable rows again.
+/// SQLite keeps no row count, so COUNT(*) walks every row. Startup seeds this value from disk,
+/// then each committed insert and delete moves it by a matching delta. Compare-exchange makes
+/// MaxDepth an exact ceiling under concurrent requests. A crash cannot leave it stale because
+/// startup recounts the durable rows.
 /// </remarks>
 public sealed class BufferDepth
 {
@@ -28,9 +28,9 @@ public sealed class BufferDepth
         }
     }
 
-    /// <summary>Releases the capacity held by rows the uploader committed as deleted.</summary>
+    /// <summary>Releases capacity held by rows whose deletion has committed.</summary>
     /// <remarks>
-    /// The compare-exchange rejects an impossible underflow without first corrupting the counter.
+    /// An underflow throws before the counter is written, so a bug cannot corrupt it.
     /// </remarks>
     public void Release(long count)
     {

@@ -14,23 +14,20 @@ using TxMonitoring.Ingestion.V1; // generated from Protos/transactions.proto
 using TxMonitoring.Shared;
 
 // --------------------------------------------------------------------------------
-// Sits between the feed generator and ingestion and durably owns every valid transaction
-// after replying 202, even when ingestion, the network, or this process dies. The feed
-// emulator is intentionally best-effort before that acknowledgement boundary.
+// Sits between the feed generator and ingestion. After replying 202 it durably owns each
+// valid transaction, even if ingestion, the network, or this process fails. The generator
+// is best-effort up to that 202.
 //
 //   generator --HTTP--> [ receiver -> SQLite (durable) -> uploader ] --gRPC--> ingestion
-//                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-//                        two INDEPENDENT loops, coupled only by disk
 //
-// We send the generator 202 the moment the transaction is on local disk (not on ingestion).
-// This decoupling allows the feed to produce through an ingestion outage.
+// The receiver and uploader are independent loops coupled only by disk. The 202 is sent once
+// the transaction is on local disk, so the feed keeps producing through an ingestion outage.
 // --------------------------------------------------------------------------------
 
 var builder = WebApplication.CreateBuilder(args);
 
-// A legitimate sensor reading is a few hundred bytes. Bound the HTTP body before JSON binding so
-// ignored properties or whitespace cannot turn the unauthenticated LAN endpoint into a memory and
-// disk pressure primitive.
+// A valid transaction is a few hundred bytes. Bounding the body before JSON binding keeps padding
+// or ignored properties from turning this unauthenticated endpoint into memory and disk pressure.
 builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = 16 * 1024);
 
 #region config
@@ -60,7 +57,7 @@ builder
     .ValidateDataAnnotations()
     .ValidateOnStart();
 
-// Needed during registration, before the service provider container exists.
+// Read directly because registration runs before the service provider exists.
 var otel = builder.Configuration.GetSection(OTelOptions.Section).Get<OTelOptions>()!;
 var ingestion =
     builder.Configuration.GetSection(IngestionOptions.Section).Get<IngestionOptions>()!;
@@ -80,10 +77,8 @@ if (
     );
 }
 
-// We're intercepting the conn to set synchronous=FULL for every conn
 builder.Services.AddSingleton<SqlitePragmaInterceptor>();
 
-// AddDbContext registers EdgeDbContext with a `scoped` DI lifetime
 builder.Services.AddDbContext<EdgeDbContext>(
     (sp, opt) =>
         opt.UseSqlite($"Data Source={buffer.Path}")
@@ -96,27 +91,25 @@ builder.Services.AddSingleton<EdgeMetrics>();
 builder.Services.AddHealthChecks().AddCheck<EdgeReadinessCheck>("sqlite_write");
 builder.Services.AddScoped<BufferSettlementStore>();
 
-// OTel
 builder
     .Services.AddOpenTelemetry()
     .ConfigureResource(r => r.AddService(otel.ServiceName))
     .WithLogging(log => log.AddOtlpExporter(opt => opt.Endpoint = new Uri(otel.Endpoint)))
     .WithMetrics(m =>
         m.AddMeter(EdgeMetrics.MeterName)
-            .AddAspNetCoreInstrumentation() // Receive endpoint (all inbound traffic)
-            .AddHttpClientInstrumentation() // gRPC included (all outbound traffic)
-            .AddRuntimeInstrumentation() // Threads, etc
+            .AddAspNetCoreInstrumentation()
+            .AddHttpClientInstrumentation() // includes the gRPC client
+            .AddRuntimeInstrumentation()
             .AddOtlpExporter(opt => opt.Endpoint = new Uri(otel.Endpoint))
     )
     .WithTracing(t =>
         t.AddAspNetCoreInstrumentation()
             .AddHttpClientInstrumentation()
-            // upload loop is bg work, autoinstrumentation can't trace it, need 2 add my own
+            // The upload loop is background work with no automatic span, so it has its own source.
             .AddSource(EdgeTracing.SourceName)
             .AddOtlpExporter(opt => opt.Endpoint = new Uri(otel.Endpoint))
     );
 
-// gRPC connection to ingestion.
 var ingestionClient = builder.Services.AddGrpcClient<TransactionIngestion.TransactionIngestionClient>(o =>
 {
     o.Address = new Uri(ingestion.ApiUrl);
@@ -128,34 +121,31 @@ if (transportSecurity.Enabled)
     );
 }
 
-// Uploads transactions from SQLite to ingestion
 builder.Services.AddHostedService<UploaderWorker>();
 
 var app = builder.Build();
 
-// Migrations belong ingestion side (see Detection.Worker)
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<EdgeDbContext>();
     Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(buffer.Path))!);
 
-    // EnsureCreated (not Migrate), because this DB is transient (but durable)
-    // If the schema changes, we drain it then migrate
+    // EnsureCreated rather than migrations because this is a transient queue. A breaking schema
+    // change means draining the buffer first. Only Detection.Worker owns EF migrations.
     await db.Database.EnsureCreatedAsync();
 
-    // EnsureCreated does not add newly introduced tables to an existing database. These compatible
-    // additions preserve already-buffered telemetry across an application upgrade.
+    // EnsureCreated does not add new tables to an existing database. Adding them here keeps
+    // already-buffered transactions across an upgrade.
     await EdgeDatabaseInitializer.EnsureCompatibleSchemaAsync(db, buffer);
 
-    // WAL will write to a log file first and fold changes into the DB later in a CP
-    // Allows the uploader read and the receiver to write simultaneously
+    // WAL lets the uploader read while the receiver writes.
     await db.Database.ExecuteSqlRawAsync("PRAGMA journal_mode=WAL;");
 
     var buffered = await db.BufferedTransactions.CountAsync();
     app.Services.GetRequiredService<BufferDepth>().Initialize(buffered);
     if (buffered > 0)
     {
-        // Anything still left in the DB was written by a previous run (proof of durability)
+        // Rows written by a previous run that were not yet settled.
         app.Logger.LogInformation(
             "Recovered {Count} unsent transactions from the local buffer at {Path}.",
             buffered,

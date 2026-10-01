@@ -5,7 +5,6 @@ import './dashboard.css'
 
 const store = useMonitoringStore()
 
-// Kafka API updates happen here
 useRiskFeed(store.pushEvent, store.pushAlert)
 </script>
 

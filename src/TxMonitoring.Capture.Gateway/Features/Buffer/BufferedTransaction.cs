@@ -1,54 +1,48 @@
 namespace TxMonitoring.Capture.Gateway.Features.Buffer;
 
 /// <summary>
-/// One transaction parked on the gateway's local disk until ingestion confirms it.
+/// One transaction held on the gateway's local disk until ingestion settles it.
 /// </summary>
 /// <remarks>
-/// Two clocks stamp every transaction: OccurredAt from the origin, BufferedAt from this gateway.
-/// Only OccurredAt travels on, and ingestion stamps its own ReceivedAt on arrival.
-/// Without event time, transactions drained after an outage would all look simultaneous.
-/// Amounts are integer minor units; no floats in the money path.
+/// OccurredAt comes from the origin and BufferedAt from this gateway. Only OccurredAt is sent
+/// upstream. Without event time, transactions drained after an outage would all look
+/// simultaneous.
 /// </remarks>
 public class BufferedTransaction
 {
-    // EF will map `Id` to SQLite's INTEGER PRIMARY KEY rowid (autoincrements)
-    // Can't use GUID for rowid because it's not an int and can't autoincrement
-    // The oldest buffered transactions will hold the smallest Id (what we use to drain)
+    // Maps to SQLite's INTEGER PRIMARY KEY rowid, so the oldest row has the smallest Id and the
+    // uploader drains in Id order.
     public long Id { get; set; }
 
-    // Origin mints this idempotency key. The live-table unique index catches a retry while queued;
-    // SettledMessage catches one that arrives after this row has been removed.
+    // Idempotency key minted by the origin. The unique index catches a retry while the row is
+    // queued. SettledMessage catches one that arrives after the row is removed.
     public string MessageId { get; set; } = string.Empty;
 
-    // SHA-256 over the immutable origin content. MessageId selects the record; the
-    // fingerprint proves a retry carries the same content. Same ID plus different
-    // content is a conflict and never overwrites the first event.
+    // SHA-256 over the immutable origin content. A retry with the same MessageId but a different
+    // fingerprint is a conflict and does not overwrite this row.
     public byte[] PayloadFingerprint { get; set; } = [];
     public int FingerprintVersion { get; set; }
 
-    // Opaque synthetic account key, forwarded untouched; the Kafka partition key downstream.
+    // Opaque account key, forwarded unchanged. Downstream it is the Kafka partition key.
     public string AccountId { get; set; } = string.Empty;
 
-    // Origin assigned, monotonic per AccountId, forwarded untouched to ingestion
+    // Assigned by the origin, monotonic per AccountId.
     public long SequenceNumber { get; set; }
 
-    // EVENT TIME -> origin's clock at generation, normalised to UTC before custody
+    // Event time from the origin's clock, normalised to UTC on admission.
     public DateTimeOffset OccurredAt { get; set; }
 
-    // BUFFER TIME, gateway's clock when the transaction hit disk
-    // BufferedAt - OccuredAt = generation -> durability
-    // time in emulator channel, Polly retries, network, gateway fsync
+    // Gateway clock when the row was written. BufferedAt - OccurredAt covers time in the
+    // generator's channel, HTTP retries, the network, and the fsync.
     public DateTimeOffset BufferedAt { get; set; }
 
-    // The W3C traceparent of the delivering request
-    // The generator's own trace ends at the 202, storing its id outlives the request
-    // The uploader links this as part of its batch span when draining
-    // Nullable because a transaction can arrive unsampled
+    // W3C traceparent of the delivering request. The generator's trace ends at the 202, so the
+    // uploader links this from its batch span. Null when the request was not traced.
     public string? TraceParent { get; set; }
 
-    // Attempted debit amount in integer minor units.
+    // Attempted debit in integer minor units.
     public long AmountMinor { get; set; }
 
-    // Uppercase three-letter code; validated against the shared accepted set.
+    // Uppercase three-letter code from the shared accepted set.
     public string Currency { get; set; } = string.Empty;
 }

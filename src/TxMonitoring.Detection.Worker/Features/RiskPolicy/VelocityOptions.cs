@@ -7,8 +7,8 @@ public sealed class VelocityOptions : IValidatableObject
     public const string Section = "Velocity";
 
     /// <summary>
-    /// StackExchange.Redis configuration string. Redis is derived cache state: when it is
-    /// unreachable every observation degrades to Unavailable instead of failing startup.
+    /// StackExchange.Redis configuration string. When Redis is unreachable, observations
+    /// degrade to Unavailable instead of failing startup.
     /// </summary>
     public string Configuration { get; set; } = "localhost:6379";
 
@@ -18,7 +18,7 @@ public sealed class VelocityOptions : IValidatableObject
     [Range(100, 30_000)]
     public int SyncTimeoutMs { get; set; } = 5_000;
 
-    /// <summary>Index TTL: 65 minutes covers the 5-minute window with eviction headroom.</summary>
+    /// <summary>Index TTL. 65 minutes covers the 5-minute window with eviction headroom.</summary>
     [Range(600, 86_400)]
     public int KeyTtlSeconds { get; set; } = 3_900;
 
@@ -31,8 +31,8 @@ public sealed class VelocityOptions : IValidatableObject
     public int WarmRebuildPageSize { get; set; } = 500;
 
     /// <summary>
-    /// Time budget per rebuild page: a single cold key yields after this long so one
-    /// rebuild cannot monopolize the consumer loop; the next event resumes it.
+    /// Time budget per rebuild page. A cold key yields after this long so one rebuild cannot
+    /// monopolize the consumer loop. The next event resumes it.
     /// </summary>
     [Range(1, 10_000)]
     public int RebuildMarkMs { get; set; } = 500;

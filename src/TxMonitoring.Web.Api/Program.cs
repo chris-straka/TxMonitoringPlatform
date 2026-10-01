@@ -44,7 +44,7 @@ builder
     )
     .ValidateOnStart();
 
-// Needed during registration, before the container exists.
+// Read directly because registration runs before the service provider exists.
 var otel = builder.Configuration.GetSection(OTelOptions.Section).Get<OTelOptions>()!;
 var kafka = builder.Configuration.GetSection(KafkaOptions.Section).Get<KafkaOptions>()!;
 var cors = builder.Configuration.GetSection(CorsOptions.Section).Get<CorsOptions>()!;
@@ -101,8 +101,8 @@ builder.Services.AddCors(options =>
 {
     options.AddDefaultPolicy(policy =>
     {
-        // CORS
-        policy.WithOrigins(cors.Origins).AllowAnyHeader().AllowAnyMethod().AllowCredentials(); // Required for SignalR
+        // SignalR needs credentialed CORS.
+        policy.WithOrigins(cors.Origins).AllowAnyHeader().AllowAnyMethod().AllowCredentials();
     });
 });
 
@@ -125,7 +125,7 @@ app.Run();
 
 public interface IRiskClient
 {
-    // These method names must match what the Frontend listens for
+    // Method names must match the event names the dashboard subscribes to.
     Task transaction_events(string payload);
     Task risk_alerts(string payload);
 }
@@ -147,11 +147,11 @@ public class KafkaSignalRWorker(
         var config = new ConsumerConfig
         {
             BootstrapServers = kafka.BootstrapServers,
-            // SignalR clients are local to this process. A shared group would split Kafka
-            // partitions across replicas and each browser would see only the subset assigned to
-            // its pod, so every replica deliberately gets its own broadcast subscription.
+            // SignalR clients are local to this process. A shared group would split partitions
+            // across replicas, so each browser would see only its pod's share. Each replica gets
+            // its own group instead.
             GroupId = $"{kafka.GroupId}-{Environment.MachineName}",
-            // Only real-time data for dashboard
+            // The dashboard shows live data only, so a new group starts at the end.
             AutoOffsetReset = AutoOffsetReset.Latest,
             EnableAutoCommit = true,
             AllowAutoCreateTopics = false,
@@ -196,7 +196,6 @@ public class KafkaSignalRWorker(
                         ]
                     );
 
-                    // Use the Topic name to decide which method to call
                     if (result.Topic == kafka.EventsTopic)
                     {
                         await hubContext.Clients.All.transaction_events(result.Message.Value);
@@ -249,8 +248,8 @@ public class KafkaSignalRWorker(
             : default;
     }
 
-    // Task.Delay throws when the token trips, and the caller is the loop's catch block.
-    // A throw from there escapes ExecuteAsync and stops the host on an ordinary shutdown.
+    // Task.Delay throws on cancellation. The caller is the loop's catch block, where a throw
+    // would escape ExecuteAsync during an ordinary shutdown.
     private static async Task SafeDelayAsync(TimeSpan delay, CancellationToken cancellationToken)
     {
         try

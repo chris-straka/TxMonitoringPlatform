@@ -9,8 +9,8 @@ public sealed class RiskPolicyTests
     [Fact]
     public void Steady_event_scores_zero_and_needs_no_review()
     {
-        // The default generator scenario after detector warm-up: small amount, no spike,
-        // no velocity evidence. This is the below-threshold proof against live config.
+        // The default generator scenario after warm-up: small amount, no spike, no velocity
+        // evidence. Checked against the shipped config.
         var decision = Evaluate(
             amountMinor: 2_500,
             spike: NoSpike(historyCount: 25),

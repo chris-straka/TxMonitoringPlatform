@@ -13,7 +13,6 @@ using Npgsql;
 using TxMonitoring.Detection.Worker.Configuration;
 using TxMonitoring.Detection.Worker.Features.Diagnostics.ML;
 using TxMonitoring.Detection.Worker.Features.RiskPolicy;
-using TxMonitoring.Detection.Worker.Features.RiskPolicy;
 using TxMonitoring.Detection.Worker.Infrastructure;
 using TxMonitoring.Detection.Worker.Infrastructure.Data;
 using TxMonitoring.Shared;

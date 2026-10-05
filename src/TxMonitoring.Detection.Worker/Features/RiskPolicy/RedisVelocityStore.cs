@@ -138,11 +138,20 @@ public sealed partial class RedisVelocityStore(
             );
 
             var nowMs = ToEpochMs(timeProvider.GetUtcNow());
-            var result = (RedisResult[])await db.ScriptEvaluateAsync(
+            var scriptResult = await db.ScriptEvaluateAsync(
                 ObserveScript,
                 [$"{baseKey}:events", $"{baseKey}:amounts", $"{baseKey}:wm", $"{baseKey}:rebuilt"],
                 [member, occurredMs, amountMinor, Window1mMs, Window5mMs, nowMs, velocityOptions.Value.KeyTtlSeconds, caughtUp ? 1 : 0]
             );
+            if (scriptResult is null)
+            {
+                return Degraded("null Lua result");
+            }
+            var result = (RedisResult[]?)scriptResult;
+            if (result is null)
+            {
+                return Degraded("null Lua result");
+            }
 
             if ((long)result[0] == 1)
             {

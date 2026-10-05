@@ -12,6 +12,8 @@
 
   <ItemGroup>
     <ProjectReference Include="../../src/TxMonitoring.Detection.Worker/TxMonitoring.Detection.Worker.csproj" />
+    <!-- ScenarioReplayTests drive the detector with the generator's own amount schedule. -->
+    <ProjectReference Include="../../src/TxMonitoring.Feed.Emulator/TxMonitoring.Feed.Emulator.csproj" />
     <None Include="../../src/TxMonitoring.Detection.Worker/model.zip" Link="model.zip" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 

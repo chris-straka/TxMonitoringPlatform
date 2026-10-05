@@ -18,14 +18,16 @@ public class GatewayOptions
 public enum GeneratorScenario
 {
     /// <summary>
-    /// 1k–5k minor units at the configured cadence. Below the absolute, spike (after warm-up),
-    /// count, and sum thresholds, so no review is expected.
+    /// 1k–5k minor units at the configured cadence. Below the absolute, count, and sum
+    /// thresholds. The spike detector's tail still fires on a few percent of events (7% in
+    /// ScenarioReplayTests), which alone scores 40, below review, so no alert is expected.
     /// </summary>
     Steady,
 
     /// <summary>
-    /// 300k–500k minor units at the configured cadence. Fires amount.absolute_high only, which
-    /// alone scores below review, so the evidence is persisted without an alert.
+    /// 300k–500k minor units at the configured cadence. Fires amount.absolute_high (35) on every
+    /// event; from the fourth event the five-minute sum passes 1M and velocity.amount_5m (40)
+    /// joins it, so review is recommended. A lone large debit is evidence; a run of them alerts.
     /// </summary>
     HighAmount,
 

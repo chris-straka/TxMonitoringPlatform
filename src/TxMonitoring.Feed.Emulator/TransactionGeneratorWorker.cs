@@ -101,7 +101,8 @@ public class TransactionGeneratorWorker(
         {
             // $10-$50: below absolute (250k), count/sum velocity, and detector surprise.
             GeneratorScenario.Steady => 1_000 + (long)(noise * 4_000),
-            // $3,000-$5,000: fires amount.absolute_high alone, which is below the review score.
+            // $3,000-$5,000: fires amount.absolute_high every time, and the five-minute sum
+            // from the fourth event on, which together reach review.
             GeneratorScenario.HighAmount => 300_000 + (long)(noise * 200_000),
             // Baseline $20-$40 with every 12th at $200-$400: isolates the per-account
             // detector spike below the absolute threshold.

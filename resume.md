@@ -1,12 +1,33 @@
 # track: swe | csa | both. TODO-prefixed lines are not true yet.
+#
+# Positioning: fintech transaction risk monitoring: explainable risk/velocity rules, Redis as a
+# cache that can fail, integer minor units, and a measured end-to-end latency story (Vue). This
+# repo began as a copy of IndustrialPlatform (IoT telemetry + ML.NET anomaly detection + AI
+# diagnosis). Lead with the bullets below; never list a shared-lineage bullet under both.
+# Numbers: Apple M4 Mac mini (10 cores, 16 GB), Release build; commands in README "Results".
 
 projects:
   - id: txmonitoring
-    name: "Transaction Monitoring & Distributed Systems"
+    name: "Transaction Risk Monitoring Platform"
     context: "Personal Project"
-    stack: ".NET 10, Kafka, Postgres, Redis, Docker, ML.NET"
+    stack: ".NET 10, Kafka, Postgres, Redis (Lua), ML.NET, Vue, Docker"
     bullets:
-      # working set
+      # lead: unique to this repo and measured
+      - id: risk-policy
+        track: both
+        text: "Built an explainable, versioned transaction risk policy (absolute amount, per-account spike, 1-minute count, 5-minute sum) with family caps, ordered reason codes, and a config hash on every decision; a seeded replay of 5 feed scenarios shows 0% review on steady traffic despite a 7% detector-tail rate."
+      - id: velocity
+        track: swe
+        text: "Implemented sliding-window velocity per account and currency as one atomic Redis Lua script keyed on event time, treated as a derived cache: when Redis is down, decisions persist with Unavailable status and the consumer never stalls."
+      - id: e2e-latency-story
+        track: swe
+        # From the owner's scripts/e2e.sh run on 2026-09-16; not re-run 2026-10-05 (Docker down).
+        text: "Measured 0.8s average (1.3s max) gateway-to-decision latency through Kafka, detection, Postgres, and Redis, after catching a harness that reported 62s because Redis was missing, and added a latency ceiling that fails CI on a recurrence."
+      - id: policy-perf-measured
+        track: swe
+        text: "Benchmarked ~1M in-process risk decisions/s (median of 5 runs) with a repeatability guard proving identical inputs replay identical decisions and reason codes."
+
+      # working set (older wording; prefer the lead bullets above)
       - id: arch
         track: both
         text: "Architected an event-driven transaction risk-monitoring platform using .NET 10, Apache Kafka, Postgres, and Docker to observe a synthetic payment feed and publish explainable review alerts."
@@ -25,9 +46,6 @@ projects:
       - id: observability
         track: both
         text: "Configured OpenTelemetry metrics, logs, and traces with a checked-in Grafana dashboard and Prometheus alerts for loss, backlog, retries, dead letters, velocity outages, and alert-outbox health."
-      - id: store-forward
-        track: swe
-        text: "Engineered a capture gateway with a durable SQLite WAL buffer (synchronous=FULL) to survive total ingestion outages, shedding excess load via HTTP 429 backpressure to keep the buffer bounded."
       - id: idempotency
         track: swe
         text: "Designed durable post-gateway custody with at-least-once gRPC and Kafka delivery for valid transactions, minting UUIDv7 idempotency keys at the feed origin and deduplicating replays in Postgres."
@@ -39,40 +57,23 @@ projects:
         text: "Developed an ASP.NET Web API relaying Kafka events via a SignalR WebSocket bridge, pushing live updates to a Vue/Vite frontend."
 
 
-      # pool
-      - id: settlement
+      # pool. Shared lineage: arch, observability, idempotency, tracing, api-relay, outbox, dlq,
+      # health, config, ci, and reliability-boundary have twins in IndustrialPlatform/resume.md.
+      # The edge/delivery bullets (store-and-forward, settlement, quarantine, admission,
+      # event-time, chaos harness, mTLS) were removed here: IndustrialPlatform owns them.
+      # Add the scenario-replay finding below when space allows.
+      - id: scenario-replay
         track: swe
-        text: "Eliminated data loss on ambiguous upload failures by deleting a buffered transaction only after ingestion explicitly named its ID accepted or rejected, retrying everything left unnamed."
-      - id: head-of-line
-        track: swe
-        text: "Implemented per-transaction rejection at ingestion, quarantining a single deterministic rejection at the gateway instead of letting it block the upload queue behind it."
-      - id: quarantine
-        track: swe
-        text: "Built a bounded SQLite quarantine table that preserves rejected transactions with their original payload and reason code, written in the same transaction as the live-row delete so poison rows stay auditable."
+        text: "Replayed every synthetic feed scenario through the production detector and policy with Redis-equivalent windows, catching a documented scenario that actually alerted 100% of the time and pinning each scenario's rule mix in tests."
       - id: outbox
         track: swe
         text: "Protected alert delivery with a transactional outbox, committing each review-recommended decision and its alert in one Postgres transaction while dashboard consumers deduplicate publisher retries by message ID."
       - id: dlq
         track: swe
         text: "Added a Kafka dead-letter path that durably copies malformed records with their source partition and offset before committing, keeping bad payloads inspectable without stalling the consumer."
-      - id: decoupling
-        track: swe
-        text: "Decoupled feed generation from transmission behind a bounded channel so network latency cannot reduce the generation rate, instrumenting every intentionally dropped transaction."
-      - id: admission-concurrency
-        track: swe
-        text: "Made buffer admission an atomic reservation guarded by a mutation gate, so concurrent writers cannot exceed the depth ceiling or observe a half-applied state change."
-      - id: event-time
-        track: swe
-        text: "Modeled event time and processing time separately so transactions flushed after a 30-minute outage retain their true occurrence time, with sequence numbers exposing dropped ranges."
       - id: health
         track: both
         text: "Added separate liveness and dependency-aware readiness probes across the gateway, ingestion, detection, and web services, covering Kafka topics and partition assignment, current Postgres migrations, and SQLite writability."
-      - id: e2e-chaos
-        track: swe
-        text: "Wrote an isolated Docker failure-injection harness that stops ingestion, Postgres, and Kafka mid-run and asserts queue recovery, one row per accepted ID, consumer retry, DLQ publication, and outbox recovery."
-      - id: mtls
-        track: csa
-        text: "Secured the gateway-to-ingestion gRPC hop in Docker Compose with mutual TLS, a private development CA, and a SHA-256 client-certificate allowlist that models independently revocable gateway identities."
       - id: detector-provenance
         track: swe
         text: "Persisted raw detector score, p-value, history count, detector version, policy version, and policy hash beside each transaction decision so historical classifications retain their runtime provenance."
@@ -96,9 +97,10 @@ projects:
         text: "Unified Kafka redelivery handling so same-fingerprint replays are no-ops and same-ID content conflicts route to the DLQ — one decision table shared by the pre-insert check and the unique-violation race handler, proven by tests."
       - id: policy-perf
         track: swe
-        text: "Measured ~67K in-process policy decisions/s (~15µs each) with a repeatability guard proving identical inputs replay identical decisions."
+        text: "Measured ~1M in-process policy decisions/s (~1µs each, median of 5 runs) with a repeatability guard proving identical inputs replay identical decisions."
       - id: e2e-latency
         track: swe
+        # Measured by the owner with scripts/e2e.sh on 2026-09-16; not re-run 2026-10-05 (Docker down).
         text: "Measured 0.8s average gateway-to-decision latency end to end across a 20-transaction Docker batch (gateway, Kafka, detection, Postgres, Redis; max 1.3s, 20 tx/s)."
       - id: config
         track: csa
@@ -115,12 +117,6 @@ projects:
       - id: arch-alt
         track: both
         text: "Architected a multi-service event-driven monitoring platform using .NET 10, Apache Kafka, and Postgres, with a Docker Compose runtime and provisioned metrics, logs, and traces."
-      - id: store-forward-alt
-        track: swe
-        text: "Engineered a capture gateway buffering 500K transactions in SQLite (WAL, synchronous=FULL) to survive total ingestion outages, shedding overflow via HTTP 429 and Retry-After backpressure."
-      - id: tracing-alt
-        track: swe
-        text: "Preserved W3C distributed tracing across a durable buffered hop by persisting trace context in SQLite and replaying it as span links, keeping a transaction's trace intact through multi-hour outages."
       - id: api-relay-alt
         track: swe
         text: "Developed an ASP.NET Web API relaying Kafka events via a SignalR WebSocket bridge, giving each replica its own consumer group so every client receives the full live stream."

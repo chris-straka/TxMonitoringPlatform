@@ -1,15 +1,33 @@
 # TxMonitoringPlatform
 
-> Origin: this repo began as a copy of IndustrialPlatform (built for an
-> agritech posting that has since expired), re-themed for fintech because
-> that is the industry I want to work in. The pipeline core is shared
-> lineage; the feed, risk policy, velocity cache, and detector provenance
-> are fintech-specific. See IndustrialPlatform for the generic platform.
+Near-real-time **transaction risk monitoring** in .NET 10. A synthetic feed of outbound debit
+attempts flows through a durable capture pipeline into Kafka, where a detection worker scores
+every transaction with an explainable, versioned risk policy: per-account amount spikes plus
+Redis sliding-window velocity (count per minute, sum per five minutes) in integer minor units.
+Each decision is persisted with its reason codes, and review-recommended alerts reach a Vue
+dashboard. The focus is risk rules you can audit, a cache that can fail without losing a
+transaction, and a measured gateway-to-decision latency.
 
-Near-real-time **transaction risk-monitoring** demo: a synthetic feed of outbound debit
-attempts flows through a durable capture pipeline into Kafka, where a detection worker keeps
-per-account state, assigns an explainable heuristic risk score, persists the decision, and
-publishes review-recommended alerts to a SignalR dashboard.
+> Origin: this repo began as a copy of
+> [IndustrialPlatform](https://github.com/chris-straka/industrial-telemetry-platform) (IoT
+> telemetry, ML.NET anomaly detection, AI diagnosis), re-themed for fintech. The capture
+> gateway, outbox, and DLQ mechanics are shared lineage and explained there; the feed, risk
+> policy, velocity cache, money types, and detector provenance are specific to this repo, and
+> there is no LLM anywhere in the decision path.
+
+```mermaid
+flowchart LR
+  F["Feed emulator<br/>5 deterministic scenarios"] -->|HTTP 202| C["Capture gateway<br/>SQLite WAL buffer"]
+  C -->|"gRPC + mTLS"| I[Ingestion API]
+  I -->|"transaction-events<br/>keyed by AccountId"| K[(Kafka)]
+  K --> D["Detection worker"]
+  D <-->|"Lua: count 1m, sum 5m"| R[("Redis<br/>derived cache")]
+  D --> S["Spike detector<br/>per account+currency"]
+  D --> P["Risk policy v1<br/>score, reasons, hash"]
+  D -->|"decision + outbox<br/>one transaction"| PG[(Postgres)]
+  PG -->|risk-alerts| K
+  K --> W["Web API<br/>SignalR"] --> UI["Vue dashboard"]
+```
 
 It **observes** a transaction feed. It never moves, holds, authorises, captures, clears,
 settles, refunds, or reconciles money; it keeps no balances, blocks nothing, and returns no
@@ -34,7 +52,7 @@ production deployment.
 Docker and Make are the only requirements for the demo path.
 
 ```sh
-git clone <this-repo>
+git clone https://github.com/chris-straka/TxMonitoringPlatform.git
 cd TxMonitoringPlatform
 make upd
 ```
@@ -51,6 +69,54 @@ detection, with no external LLM call anywhere in the path.
 > checkout's volumes exist on this machine, discard **only this project's** demo data with
 > `docker compose down --volumes` before the first run. Never run that against an unverified
 > project context.
+
+# Build and test
+
+```sh
+dotnet build TxMonitoringPlatform.slnx && dotnet test TxMonitoringPlatform.slnx      # 120 tests
+cd src/TxMonitoring.Web.Dashboard && npm ci && npm run lint && npm test && npm run build  # 25 tests
+./scripts/e2e.sh                                                                    # needs Docker
+```
+
+On Apple Silicon without Rosetta, `brew install protobuf grpc` provides the native `protoc` that
+`Directory.Build.props` picks up. Node is pinned to 24 LTS in `mise.toml`.
+
+# Results
+
+Measured on an Apple M4 Mac mini (10 cores, 16 GB), .NET 10.0.401, Release build, on
+2026-10-05 while other builds were running on the machine, unless noted.
+
+Scenario replay: each generator scenario's own amount schedule and cadence goes through the
+production spike detector and risk policy, with velocity windows computed as the Redis Lua script
+computes them (4 accounts x 600 events, seeded, warm-up excluded).
+Command: `dotnet test tests/TxMonitoring.Detection.Tests -c Release --filter ScenarioReplayTests --logger "console;verbosity=detailed"`.
+
+| scenario | review | absolute | spike | count 1m | sum 5m |
+| --- | --- | --- | --- | --- | --- |
+| Steady | 0.0% | 0.0% | 7.1% | 0.0% | 0.0% |
+| HighAmount | 100.0% | 100.0% | 5.6% | 0.0% | 100.0% |
+| AccountSpike | 0.0% | 0.0% | 8.4% (196/196 scheduled spikes) | 0.0% | 0.0% |
+| Burst | 87.3% | 0.0% | 5.6% | 100.0% | 86.5% |
+| Combined | 99.8% | 10.0% | 10.0% | 100.0% | 99.8% |
+
+What it shows: the per-account detector's tail fires on about 7% of steady traffic, but a lone
+signal scores 40 against a review threshold of 60, so steady flow never alerts. Burst reviews
+once the five-minute sum fills. The replay also corrected a documented claim: HighAmount was
+described as "absolute rule alone, no alert", but four $3,000+ debits in five minutes pass the
+$10,000 sum rule, so the scenario reviews every time.
+
+| what | result | command |
+| --- | --- | --- |
+| Policy evaluation, in-process | ~1.05M decisions/s (median of 5 runs, range 0.56M-1.17M) | `dotnet test tests/TxMonitoring.Detection.Tests -c Release --filter PolicyThroughputTests --logger "console;verbosity=detailed"` |
+| Gateway-to-decision latency, healthy 20-transaction batch through gateway, Kafka, detection, Postgres, Redis | 0.8 s avg, 1.3 s max | `./scripts/e2e.sh` (owner run, 2026-09-16; **not re-run on 2026-10-05** because Docker was down) |
+| Test suites | 120 .NET + 25 Vue, all passing | commands above |
+| Dashboard bundle | 581 kB raw / 209 kB gzip | `npm run build` |
+
+The latency number has a story worth knowing: the first run said 62 s, because the e2e harness
+never started Redis and every decision waited out reconnect timeouts before degrading. See
+[docs/Interview.md](docs/Interview.md).
+
+A guided tour with exercises and interview answers is in [docs/LEARN.md](docs/LEARN.md).
 
 # Data flow
 
